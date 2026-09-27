@@ -2,6 +2,7 @@
 
 import os
 import re
+import time
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit
@@ -17,6 +18,13 @@ socketio = SocketIO(
     max_http_buffer_size=2_000_000,
 )
 
+
+@app.context_processor
+def account_context():
+    user_id = session.get("user_id")
+    user = database.get_user(user_id) if user_id else None
+    return {"logged_in_email": user["email"] if user else None}
+
 # --------------------------------------------------------------------------
 # Live session state (in-memory, one quiz at a time)
 # --------------------------------------------------------------------------
@@ -26,6 +34,7 @@ live = {
     "index": 0,
     "locked_answer": None,
     "locked_name": None,
+    "question_started_at": None,
 }
 
 # Per-joiner session state, keyed by socket id. Gesture recognition runs in
@@ -44,6 +53,8 @@ def current_question():
         "total": len(q["questions"]),
         "question": item["question"],
         "choices": item["choices"],
+        "time_limit": item["time_limit"],
+        "started_at": live["question_started_at"],
     }
 
 
@@ -70,6 +81,9 @@ def reset_joiners():
 def lock_answer(choice, name):
     """First lock of the current question wins; broadcast to host + joiners."""
     if live["quiz"] is None or live["locked_answer"] is not None:
+        return False
+    item = live["quiz"]["questions"][live["index"]]
+    if time.time() - live["question_started_at"] >= item["time_limit"]:
         return False
     live["locked_answer"] = choice
     live["locked_name"] = name
@@ -119,12 +133,17 @@ def logout():
 # Quiz management routes
 # --------------------------------------------------------------------------
 def parse_questions(raw):
-    """Each line: question|A|B|C|D|correctLetter (C/D optional)."""
+    """Each line: question|A|B|C|D|correctLetter|seconds (C/D optional)."""
     questions = []
     for line in raw.strip().splitlines():
         parts = [p.strip() for p in line.split("|")]
         if not parts[0]:
             continue
+        time_limit = 30
+        if parts[-1].isdigit():
+            time_limit = int(parts.pop())
+        if not 5 <= time_limit <= 600:
+            return None
         if len(parts) < 4 or parts[-1] not in ("A", "B", "C", "D"):
             return None
         q = {
@@ -134,6 +153,7 @@ def parse_questions(raw):
             "choice_c": parts[3] if len(parts) > 4 else None,
             "choice_d": parts[4] if len(parts) > 5 else None,
             "correct_letter": parts[-1],
+            "time_limit": time_limit,
         }
         letters = {"A", "B"} | ({"C"} if q["choice_c"] else set()) | ({"D"} if q["choice_d"] else set())
         if q["correct_letter"] not in letters:
@@ -162,14 +182,30 @@ def new_quiz():
     if "user_id" not in session:
         return redirect(url_for("login"))
     if request.method == "POST":
-        questions = parse_questions(request.form["questions"])
+        questions = parse_questions(request.form.get("questions", ""))
         if questions is None:
             return render_template(
                 "new_quiz.html", error="Format: question|A|B|C|D|correctLetter"
             )
         database.create_quiz(session["user_id"], request.form["title"].strip(), questions)
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("dashboard", saved=1))
     return render_template("new_quiz.html")
+
+
+@app.route("/quiz/<int:quiz_id>/edit", methods=["GET", "POST"])
+def edit_quiz(quiz_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    quiz = database.get_quiz_for_edit(quiz_id, session["user_id"])
+    if not quiz:
+        return redirect(url_for("dashboard"))
+    if request.method == "POST":
+        questions = parse_questions(request.form.get("questions", ""))
+        if questions is None:
+            return render_template("new_quiz.html", quiz=quiz, error="Add valid questions, answers, correct answers, and timers.")
+        database.update_quiz(quiz_id, session["user_id"], request.form["title"].strip(), questions)
+        return redirect(url_for("dashboard", saved=1))
+    return render_template("new_quiz.html", quiz=quiz)
 
 
 @app.route("/join")
@@ -248,6 +284,7 @@ def on_next_question():
     live["index"] = (live["index"] + 1) % len(live["quiz"]["questions"])
     live["locked_answer"] = None
     live["locked_name"] = None
+    live["question_started_at"] = time.time()
     reset_joiners()
     emit("question_update", host_payload(), broadcast=True)
 
@@ -261,6 +298,7 @@ def on_load_quiz(data):
     live.update(
         quiz_id=quiz["id"], quiz=quiz, index=0,
         locked_answer=None, locked_name=None,
+        question_started_at=time.time(),
     )
     reset_joiners()
     emit("question_update", host_payload(), broadcast=True)

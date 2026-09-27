@@ -47,10 +47,14 @@ def init_db():
             choice_c TEXT,
             choice_d TEXT,
             correct_letter TEXT NOT NULL,
+            time_limit INTEGER NOT NULL DEFAULT 30,
             position INTEGER NOT NULL,
             FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
         );
     """)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(questions)")}
+    if "time_limit" not in columns:
+        conn.execute("ALTER TABLE questions ADD COLUMN time_limit INTEGER NOT NULL DEFAULT 30")
     conn.commit()
     conn.close()
 
@@ -95,7 +99,7 @@ def get_user(user_id):
 def create_quiz(owner_id, title, questions):
     """
     questions: list of dicts with keys
-      question_text, choice_a, choice_b, choice_c, choice_d, correct_letter
+    question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, time_limit
     """
     conn = get_db()
     cur = conn.execute(
@@ -105,10 +109,10 @@ def create_quiz(owner_id, title, questions):
     for i, q in enumerate(questions):
         conn.execute(
             """INSERT INTO questions
-               (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, position)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, time_limit, position)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (quiz_id, q["question_text"], q["choice_a"], q["choice_b"],
-             q.get("choice_c"), q.get("choice_d"), q["correct_letter"], i),
+             q.get("choice_c"), q.get("choice_d"), q["correct_letter"], q.get("time_limit", 30), i),
         )
     conn.commit()
     conn.close()
@@ -147,10 +151,10 @@ def update_quiz(quiz_id, owner_id, title, questions):
     for i, q in enumerate(questions):
         conn.execute(
             """INSERT INTO questions
-               (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, position)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, time_limit, position)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (quiz_id, q["question_text"], q["choice_a"], q["choice_b"],
-             q.get("choice_c"), q.get("choice_d"), q["correct_letter"], i),
+             q.get("choice_c"), q.get("choice_d"), q["correct_letter"], q.get("time_limit", 30), i),
         )
     conn.commit()
     conn.close()
@@ -194,6 +198,7 @@ def get_quiz(quiz_id, owner_id=None):
                     }.items() if v
                 },
                 "answer": q["correct_letter"],
+                "time_limit": q["time_limit"],
             }
             for q in questions
         ],

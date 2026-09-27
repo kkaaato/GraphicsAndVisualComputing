@@ -2,15 +2,18 @@
 {% block title %}My Quizzes — GestureLock{% endblock %}
 {% block content %}
   <h1>My Quizzes</h1>
+  {% if request.args.get('saved') %}<div class="saved-message">Quiz saved successfully.</div>{% endif %}
   <p class="muted-link">Logged in as {{ email }} — <a href="{{ url_for('logout') }}">log out</a></p>
   <p class="muted-link"><a href="{{ url_for('home') }}">Back to home</a></p>
   {% for quiz in quizzes %}
     <div class="quiz-row">
       <span>{{ quiz.title }}</span>
+      <a href="{{ url_for('edit_quiz', quiz_id=quiz.id) }}">Edit</a>
       <a href="{{ url_for('host_page', quiz_id=quiz.id) }}">Host</a>
     </div>
   {% else %}
     <p style="color:#a9a4c2;">No quizzes yet.</p>
   {% endfor %}
   <a href="{{ url_for('new_quiz') }}"><button type="button">Create a new quiz</button></a>
+  <a href="{{ url_for('join_page') }}"><button type="button">Join a quiz</button></a>
 {% endblock %}

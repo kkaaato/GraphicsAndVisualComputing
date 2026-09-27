@@ -1,14 +1,21 @@
 {% extends "base.html" %}
-{% block title %}New Quiz — GestureLock{% endblock %}
+{% block title %}{{ 'Edit Quiz' if quiz else 'New Quiz' }} — GestureLock{% endblock %}
 {% block content %}
-  <h1>Create a quiz</h1>
+  <h1>{{ 'Edit quiz' if quiz else 'Create a quiz' }}</h1>
   <form method="post">
     <label>Title</label>
-    <input type="text" name="title" required>
-    <label>Questions (one per line): question|choiceA|choiceB|choiceC|choiceD|correctLetter</label>
-    <textarea name="questions" placeholder="What does CPU stand for?|Central Processing Unit|Computer Personal Unit|Central Program Utility|Core Processing Utility|A"></textarea>
+    <input type="text" name="title" value="{{ quiz.title if quiz else '' }}" required>
+    <div id="question-list"></div>
+    <button id="add-question" type="button">+ Add question</button>
+    <textarea id="questions" name="questions" hidden></textarea>
     <button type="submit">Save quiz</button>
   </form>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
   <p class="muted-link"><a href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
+{% endblock %}
+{% block scripts %}
+  <script>
+    window.EDIT_QUIZ = {{ quiz.questions | tojson if quiz else 'null' }};
+  </script>
+  <script src="{{ url_for('static', filename='new_quiz.js') }}"></script>
 {% endblock %}

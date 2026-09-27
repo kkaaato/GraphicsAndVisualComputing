@@ -8,8 +8,23 @@
   {% block head %}{% endblock %}
 </head>
 <body>
-  <div class="card">
-    {% block content %}{% endblock %}
+  <div class="app-shell">
+    <aside class="profile-panel">
+      <h2>Profile</h2>
+      {% if session.get('user_id') %}
+        <p class="profile-status logged-in">● Logged in</p>
+        <p class="profile-email">{{ logged_in_email }}</p>
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('logout') }}">Log out</a>
+      {% else %}
+        <p class="profile-status logged-out">● Not logged in</p>
+        <a href="{{ url_for('login') }}">Log in</a>
+        <a href="{{ url_for('signup') }}">Create account</a>
+      {% endif %}
+    </aside>
+    <main class="card">
+      {% block content %}{% endblock %}
+    </main>
   </div>
   {% block scripts %}{% endblock %}
 </body>
