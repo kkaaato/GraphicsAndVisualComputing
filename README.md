@@ -1,7 +1,7 @@
 # GestureLock
 
 A multiple-choice quiz system with dual-hand gesture confirmation for virtual
-classroom assessments. Teachers host quizzes from a browser; students join from
+classroom assessments. Account holders host quizzes from a browser; students join from
 a browser on any device — no installs.
 
 ## How it works
