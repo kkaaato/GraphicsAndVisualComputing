@@ -1,0 +1,157 @@
+"""
+database.py — SQLite storage for teacher accounts and quizzes
+================================================================
+Students are NOT stored here at all — they just type a display
+name for the session (like Kahoot), so there's no student PII to
+protect. Teachers get real accounts since they log in across
+sessions to manage quizzes; passwords are always stored hashed,
+never in plain text.
+"""
+
+import sqlite3
+from werkzeug.security import generate_password_hash, check_password_hash
+
+DB_PATH = "quiz.db"
+
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS quizzes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            owner_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            FOREIGN KEY (owner_id) REFERENCES users(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quiz_id INTEGER NOT NULL,
+            question_text TEXT NOT NULL,
+            choice_a TEXT NOT NULL,
+            choice_b TEXT NOT NULL,
+            choice_c TEXT,
+            choice_d TEXT,
+            correct_letter TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
+        );
+    """)
+    conn.commit()
+    conn.close()
+
+
+# --------------------------------------------------------------------------
+# Users (teachers)
+# --------------------------------------------------------------------------
+def create_user(email, password):
+    conn = get_db()
+    try:
+        conn.execute(
+            "INSERT INTO users (email, password_hash) VALUES (?, ?)",
+            (email, generate_password_hash(password)),
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False  # email already registered
+    finally:
+        conn.close()
+
+
+def verify_user(email, password):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    conn.close()
+    if row and check_password_hash(row["password_hash"], password):
+        return dict(row)
+    return None
+
+
+def get_user(user_id):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+# --------------------------------------------------------------------------
+# Quizzes and questions
+# --------------------------------------------------------------------------
+def create_quiz(owner_id, title, questions):
+    """
+    questions: list of dicts with keys
+      question_text, choice_a, choice_b, choice_c, choice_d, correct_letter
+    """
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO quizzes (owner_id, title) VALUES (?, ?)", (owner_id, title)
+    )
+    quiz_id = cur.lastrowid
+    for i, q in enumerate(questions):
+        conn.execute(
+            """INSERT INTO questions
+               (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, position)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (quiz_id, q["question_text"], q["choice_a"], q["choice_b"],
+             q.get("choice_c"), q.get("choice_d"), q["correct_letter"], i),
+        )
+    conn.commit()
+    conn.close()
+    return quiz_id
+
+
+def list_quizzes(owner_id):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT id, title FROM quizzes WHERE owner_id = ? ORDER BY id DESC", (owner_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_quiz(quiz_id, owner_id=None):
+    conn = get_db()
+    if owner_id is not None:
+        quiz = conn.execute(
+            "SELECT * FROM quizzes WHERE id = ? AND owner_id = ?", (quiz_id, owner_id)
+        ).fetchone()
+    else:
+        quiz = conn.execute("SELECT * FROM quizzes WHERE id = ?", (quiz_id,)).fetchone()
+    if not quiz:
+        conn.close()
+        return None
+    questions = conn.execute(
+        "SELECT * FROM questions WHERE quiz_id = ? ORDER BY position", (quiz_id,)
+    ).fetchall()
+    conn.close()
+    return {
+        "id": quiz["id"],
+        "title": quiz["title"],
+        "questions": [
+            {
+                "question": q["question_text"],
+                "choices": {
+                    k: v for k, v in {
+                        "A": q["choice_a"], "B": q["choice_b"],
+                        "C": q["choice_c"], "D": q["choice_d"],
+                    }.items() if v
+                },
+                "answer": q["correct_letter"],
+            }
+            for q in questions
+        ],
+    }

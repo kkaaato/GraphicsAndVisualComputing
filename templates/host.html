@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Host — GestureLock{% endblock %}
+{% block head %}
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+{% endblock %}
+{% block content %}
+  <h1 class="eyebrow">Question <span id="q-num">1</span> of <span id="q-total">-</span></h1>
+  <h2 id="question" class="big-title">Loading…</h2>
+  <div id="choices"></div>
+  <div class="status" id="status">Waiting for an answer…</div>
+  <button id="next-btn" type="button">Next Question</button>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='host.js') }}"></script>
+{% endblock %}

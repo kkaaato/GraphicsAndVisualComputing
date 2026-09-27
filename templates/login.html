@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Log in — GestureLock{% endblock %}
+{% block content %}
+  <h1>Log in</h1>
+  <form method="post">
+    <label>Email</label>
+    <input type="email" name="email" required>
+    <label>Password</label>
+    <input type="password" name="password" required>
+    <button type="submit">Log in</button>
+  </form>
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+  <p class="muted-link">Need an account? <a href="{{ url_for('signup') }}">Sign up</a></p>
+{% endblock %}

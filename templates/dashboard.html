@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}My Quizzes — GestureLock{% endblock %}
+{% block content %}
+  <h1>My Quizzes</h1>
+  <p class="muted-link">Logged in as {{ email }} — <a href="{{ url_for('logout') }}">log out</a></p>
+  {% for quiz in quizzes %}
+    <div class="quiz-row">
+      <span>{{ quiz.title }}</span>
+      <a href="{{ url_for('host_page', quiz_id=quiz.id) }}">Host</a>
+    </div>
+  {% else %}
+    <p style="color:#a9a4c2;">No quizzes yet.</p>
+  {% endfor %}
+  <a href="{{ url_for('new_quiz') }}"><button type="button">Create a new quiz</button></a>
+{% endblock %}
