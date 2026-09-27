@@ -1,21 +1,24 @@
 const socket = io();
 let questionData = null;
 let quizStarted = false;
+let questionAdvanced = false;
 
 document.getElementById("start-btn").addEventListener("click", () => {
-  socket.emit("load_quiz", { quiz_id: window.QUIZ_ID });
+  const codeInput = document.getElementById("join-code");
+  const code = codeInput.value.trim().toUpperCase();
+  if (!code) {
+    codeInput.reportValidity();
+    return;
+  }
+  socket.emit("load_quiz", { quiz_id: window.QUIZ_ID, code });
+  document.getElementById("join-link").value = `${window.location.origin}/join?code=${encodeURIComponent(code)}`;
   quizStarted = true;
   document.getElementById("start-btn").style.display = "none";
-  document.getElementById("next-btn").disabled = false;
-});
-
-document.getElementById("next-btn").addEventListener("click", () => {
-  if (!quizStarted) return;
-  socket.emit("next_question");
 });
 
 function renderHost(data) {
   questionData = data;
+  questionAdvanced = false;
   document.getElementById("q-num").textContent = data.index + 1;
   document.getElementById("q-total").textContent = data.total;
   document.getElementById("question").textContent = data.question;
@@ -47,8 +50,15 @@ function updateTimer() {
   const remaining = Math.max(0, Math.ceil(
     questionData.time_limit - (Date.now() / 1000 - questionData.started_at)
   ));
-  timer.textContent = remaining ? `Time remaining: ${remaining}s` : "Time is up";
+  const lastQuestion = questionData.index + 1 >= questionData.total;
+  timer.textContent = remaining
+    ? `Time remaining: ${remaining}s`
+    : (lastQuestion ? "Quiz complete" : "Time is up");
   timer.className = remaining <= 5 ? "status wrong" : "status";
+  if (!remaining && !lastQuestion && !questionAdvanced) {
+    questionAdvanced = true;
+    socket.emit("next_question");
+  }
 }
 
 function refresh() {

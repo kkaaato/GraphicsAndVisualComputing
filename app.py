@@ -35,6 +35,7 @@ live = {
     "locked_answer": None,
     "locked_name": None,
     "question_started_at": None,
+    "join_code": None,
 }
 
 # Per-joiner session state, keyed by socket id. Gesture recognition runs in
@@ -55,6 +56,7 @@ def current_question():
         "choices": item["choices"],
         "time_limit": item["time_limit"],
         "started_at": live["question_started_at"],
+        "join_code": live["join_code"],
     }
 
 
@@ -240,7 +242,7 @@ def api_login_check():
 @app.route("/api/question")
 def api_question():
     code = request.args.get("code", "").strip()
-    if not live["quiz"] or not code or code != str(live["quiz_id"]):
+    if not live["quiz"] or not code or code != live["join_code"]:
         return "", 204
     q = current_question()
     return jsonify(q) if q else ("", 204)
@@ -281,6 +283,9 @@ def on_next_question():
     """Host advances; wraps at the end and clears the lock."""
     if live["quiz"] is None:
         return
+    item = live["quiz"]["questions"][live["index"]]
+    if time.time() - live["question_started_at"] < item["time_limit"]:
+        return
     live["index"] = (live["index"] + 1) % len(live["quiz"]["questions"])
     live["locked_answer"] = None
     live["locked_name"] = None
@@ -291,14 +296,18 @@ def on_next_question():
 
 @socketio.on("load_quiz")
 def on_load_quiz(data):
-    """Host page tells the server which quiz to serve; resets to question 0."""
+    """Host starts a quiz with a code participants can use to join."""
     quiz = database.get_quiz(int(data.get("quiz_id", 0)))
     if not quiz or not quiz["questions"]:
+        return
+    code = re.sub(r"[^A-Za-z0-9]", "", str(data.get("code", ""))).upper()[:12]
+    if not code:
         return
     live.update(
         quiz_id=quiz["id"], quiz=quiz, index=0,
         locked_answer=None, locked_name=None,
         question_started_at=time.time(),
+        join_code=code,
     )
     reset_joiners()
     emit("question_update", host_payload(), broadcast=True)

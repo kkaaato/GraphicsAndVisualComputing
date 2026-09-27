@@ -9,14 +9,15 @@
   <div class="status" id="timer">Time remaining: --</div>
   <div class="join-details">
     <strong>Join this quiz</strong>
+    <label for="join-code">Create a join code</label>
+    <input id="join-code" type="text" value="QUIZ{{ quiz.id }}" maxlength="12" pattern="[A-Za-z0-9]+">
     <label for="join-link">Share this link</label>
-    <input id="join-link" type="text" value="{{ url_for('join_page', code=quiz.id, _external=True) }}" readonly>
-    <p>Or give participants code <strong>{{ quiz.id }}</strong></p>
+    <input id="join-link" type="text" value="" readonly>
+    <p>Participants use the code you create above.</p>
   </div>
   <div id="choices"></div>
   <div class="status" id="status">Participants can join before you start.</div>
   <button id="start-btn" type="button">Start Quiz</button>
-  <button id="next-btn" type="button" disabled>Next Question</button>
   <p class="muted-link"><a href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
 {% endblock %}
 {% block scripts %}
