@@ -1,4 +1,6 @@
 flask
 flask-socketio
 eventlet
+gunicorn
 werkzeug
+requests

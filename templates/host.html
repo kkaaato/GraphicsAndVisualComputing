@@ -9,7 +9,9 @@
   <div id="choices"></div>
   <div class="status" id="status">Waiting for an answer…</div>
   <button id="next-btn" type="button">Next Question</button>
+  <p class="muted-link"><a href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
 {% endblock %}
 {% block scripts %}
+  <script>window.QUIZ_ID = {{ quiz.id }};</script>
   <script src="{{ url_for('static', filename='host.js') }}"></script>
 {% endblock %}

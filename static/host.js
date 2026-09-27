@@ -4,6 +4,10 @@ document.getElementById("next-btn").addEventListener("click", () => {
   socket.emit("next_question");
 });
 
+socket.on("connect", () => {
+  socket.emit("load_quiz", { quiz_id: window.QUIZ_ID });
+});
+
 function renderHost(data) {
   document.getElementById("q-num").textContent = data.index + 1;
   document.getElementById("q-total").textContent = data.total;

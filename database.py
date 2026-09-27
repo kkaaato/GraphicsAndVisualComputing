@@ -1,11 +1,12 @@
 """
-database.py — SQLite storage for teacher accounts and quizzes
+database.py — SQLite storage for accounts and quizzes
 ================================================================
-Students are NOT stored here at all — they just type a display
-name for the session (like Kahoot), so there's no student PII to
-protect. Teachers get real accounts since they log in across
-sessions to manage quizzes; passwords are always stored hashed,
-never in plain text.
+Anyone can create an account to build and host quizzes, or just
+to test their own. Students/guests joining a live quiz are NOT
+stored here at all — they type a display name for that session
+only, so there's no extra personal data to protect
+for them. Account passwords are always stored hashed, never in
+plain text.
 """
 
 import sqlite3
@@ -55,7 +56,7 @@ def init_db():
 
 
 # --------------------------------------------------------------------------
-# Users (teachers)
+# Accounts (anyone — host their own quizzes, or just test one out)
 # --------------------------------------------------------------------------
 def create_user(email, password):
     conn = get_db()
@@ -112,6 +113,48 @@ def create_quiz(owner_id, title, questions):
     conn.commit()
     conn.close()
     return quiz_id
+
+
+def get_quiz_for_edit(quiz_id, owner_id):
+    """Raw rows (not the display-ready shape) so the edit form can pre-fill
+    the pipe-delimited textarea with the quiz's current content."""
+    conn = get_db()
+    quiz = conn.execute(
+        "SELECT * FROM quizzes WHERE id = ? AND owner_id = ?", (quiz_id, owner_id)
+    ).fetchone()
+    if not quiz:
+        conn.close()
+        return None
+    questions = conn.execute(
+        "SELECT * FROM questions WHERE quiz_id = ? ORDER BY position", (quiz_id,)
+    ).fetchall()
+    conn.close()
+    return {"id": quiz["id"], "title": quiz["title"], "questions": [dict(q) for q in questions]}
+
+
+def update_quiz(quiz_id, owner_id, title, questions):
+    """Overwrites a quiz's title and questions. Only the owner can update it.
+    Returns True if the quiz was found and updated, False otherwise."""
+    conn = get_db()
+    owned = conn.execute(
+        "SELECT id FROM quizzes WHERE id = ? AND owner_id = ?", (quiz_id, owner_id)
+    ).fetchone()
+    if not owned:
+        conn.close()
+        return False
+    conn.execute("UPDATE quizzes SET title = ? WHERE id = ?", (title, quiz_id))
+    conn.execute("DELETE FROM questions WHERE quiz_id = ?", (quiz_id,))
+    for i, q in enumerate(questions):
+        conn.execute(
+            """INSERT INTO questions
+               (quiz_id, question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, position)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (quiz_id, q["question_text"], q["choice_a"], q["choice_b"],
+             q.get("choice_c"), q.get("choice_d"), q["correct_letter"], i),
+        )
+    conn.commit()
+    conn.close()
+    return True
 
 
 def list_quizzes(owner_id):

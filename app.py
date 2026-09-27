@@ -1,85 +1,90 @@
-"""
-GestureLock — Server (Phase 2, restructured)
-================================================
-Same behavior as server_with_accounts.py, but the frontend now
-lives in its own files instead of inline strings:
+"""GestureLock — Flask + SocketIO server"""
 
-  templates/   -> HTML pages (Jinja2), one file per page
-  static/      -> style.css and host.js
-
-This file only holds routes, session/auth logic, and the
-Socket.IO event handlers.
-
-SETUP
------
-pip install flask flask-socketio eventlet werkzeug
-
-RUN
----
-python gesturelock_server.py
-"""
+import eventlet
+eventlet.monkey_patch()  # must run before socket/ssl imports
 
 import os
-import threading
-from functools import wraps
+import re
 
-from flask import Flask, render_template, jsonify, request, session, redirect, url_for
-from flask_socketio import SocketIO
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask_socketio import SocketIO, emit
 
-import database as db
+import database
 
 app = Flask(__name__)
-# Set a real SECRET_KEY environment variable on your host (see deployment notes).
-# This fallback is only safe for local testing on your own machine.
-app.secret_key = os.environ.get("SECRET_KEY", "dev-only-fallback-key")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+app.secret_key = os.environ.get("SECRET_KEY", "dev-only-insecure-key")
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-db.init_db()
+# --------------------------------------------------------------------------
+# Live session state (in-memory, one quiz at a time)
+# --------------------------------------------------------------------------
+live = {
+    "quiz_id": None,
+    "quiz": None,
+    "index": 0,
+    "locked_answer": None,
+    "locked_name": None,
+}
 
-state = {"questions": [], "q_index": 0, "locked_answer": None, "quiz_title": None}
-state_lock = threading.Lock()
+
+def current_question():
+    """Payload shape shared by /api/question and the question_update event."""
+    q = live["quiz"]
+    if not q or not q["questions"]:
+        return None
+    item = q["questions"][min(live["index"], len(q["questions"]) - 1)]
+    return {
+        "index": live["index"],
+        "total": len(q["questions"]),
+        "question": item["question"],
+        "choices": item["choices"],
+    }
 
 
-def login_required(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return wrapper
+def host_payload():
+    """Host view: adds the answer key and lock status on top of the base payload."""
+    payload = current_question()
+    if payload is None:
+        return None
+    item = live["quiz"]["questions"][payload["index"]]
+    payload["answer"] = item["answer"]
+    payload["locked_answer"] = live["locked_answer"]
+    payload["is_correct"] = (
+        live["locked_answer"] == item["answer"] if live["locked_answer"] else None
+    )
+    return payload
 
 
 # --------------------------------------------------------------------------
-# Auth
+# Auth routes
 # --------------------------------------------------------------------------
 @app.route("/signup", methods=["GET", "POST"])
 def signup():
-    error = None
     if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
-        if not email or not password:
-            error = "Email and password are required."
-        elif db.create_user(email, password):
-            return redirect(url_for("login"))
-        else:
-            error = "That email is already registered."
-    return render_template("signup.html", error=error)
+        email = request.form["email"].strip().lower()
+        password = request.form["password"]
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            return render_template("signup.html", error="Invalid email.")
+        if len(password) < 6:
+            return render_template("signup.html", error="Password too short.")
+        if database.create_user(email, password):
+            session["user_id"] = database.verify_user(email, password)["id"]
+            return redirect(url_for("dashboard"))
+        return render_template("signup.html", error="Email already registered.")
+    return render_template("signup.html")
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    error = None
     if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
-        user = db.verify_user(email, password)
+        user = database.verify_user(
+            request.form["email"].strip().lower(), request.form["password"]
+        )
         if user:
             session["user_id"] = user["id"]
-            session["email"] = user["email"]
             return redirect(url_for("dashboard"))
-        error = "Incorrect email or password."
-    return render_template("login.html", error=error)
+        return render_template("login.html", error="Wrong email or password.")
+    return render_template("login.html")
 
 
 @app.route("/logout")
@@ -89,137 +94,140 @@ def logout():
 
 
 # --------------------------------------------------------------------------
-# Quiz management
+# Quiz management routes
 # --------------------------------------------------------------------------
+def parse_questions(raw):
+    """Each line: question|A|B|C|D|correctLetter (C/D optional)."""
+    questions = []
+    for line in raw.strip().splitlines():
+        parts = [p.strip() for p in line.split("|")]
+        if not parts[0]:
+            continue
+        if len(parts) < 4 or parts[-1] not in ("A", "B", "C", "D"):
+            return None
+        q = {
+            "question_text": parts[0],
+            "choice_a": parts[1],
+            "choice_b": parts[2],
+            "choice_c": parts[3] if len(parts) > 4 else None,
+            "choice_d": parts[4] if len(parts) > 5 else None,
+            "correct_letter": parts[-1],
+        }
+        letters = {"A", "B"} | ({"C"} if q["choice_c"] else set()) | ({"D"} if q["choice_d"] else set())
+        if q["correct_letter"] not in letters:
+            return None
+        questions.append(q)
+    return questions or None
+
+
+@app.route("/")
 @app.route("/dashboard")
-@login_required
 def dashboard():
-    quizzes = db.list_quizzes(session["user_id"])
-    return render_template("dashboard.html", quizzes=quizzes, email=session["email"])
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    user = database.get_user(session["user_id"])
+    return render_template(
+        "dashboard.html", email=user["email"], quizzes=database.list_quizzes(user["id"])
+    )
 
 
-@app.route("/quizzes/new", methods=["GET", "POST"])
-@login_required
+@app.route("/quiz/new", methods=["GET", "POST"])
 def new_quiz():
-    error = None
+    if "user_id" not in session:
+        return redirect(url_for("login"))
     if request.method == "POST":
-        title = request.form.get("title", "").strip()
-        raw = request.form.get("questions", "").strip()
-        questions = []
-        for line_no, line in enumerate(raw.splitlines(), start=1):
-            line = line.strip()
-            if not line:
-                continue
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) < 4:
-                error = f"Line {line_no} needs at least: question|choiceA|choiceB|correctLetter"
-                break
-            q_text, choice_a, choice_b = parts[0], parts[1], parts[2]
-            choice_c = parts[3] if len(parts) > 4 else None
-            choice_d = parts[4] if len(parts) > 5 else None
-            correct = parts[-1].upper()
-            if correct not in ("A", "B", "C", "D"):
-                error = f"Line {line_no}: correct answer must be A, B, C, or D."
-                break
-            questions.append({
-                "question_text": q_text, "choice_a": choice_a, "choice_b": choice_b,
-                "choice_c": choice_c, "choice_d": choice_d, "correct_letter": correct,
-            })
-        if not error and title and questions:
-            db.create_quiz(session["user_id"], title, questions)
-            return redirect(url_for("dashboard"))
-        if not error:
-            error = "Add a title and at least one question."
-    return render_template("new_quiz.html", error=error)
-
-
-# --------------------------------------------------------------------------
-# Live hosting + student-facing API
-# --------------------------------------------------------------------------
-@app.route("/host/<int:quiz_id>")
-@login_required
-def host_page(quiz_id):
-    quiz = db.get_quiz(quiz_id, owner_id=session["user_id"])
-    if not quiz or not quiz["questions"]:
+        questions = parse_questions(request.form["questions"])
+        if questions is None:
+            return render_template(
+                "new_quiz.html", error="Format: question|A|B|C|D|correctLetter"
+            )
+        database.create_quiz(session["user_id"], request.form["title"].strip(), questions)
         return redirect(url_for("dashboard"))
-    with state_lock:
-        state["questions"] = quiz["questions"]
-        state["q_index"] = 0
-        state["locked_answer"] = None
-        state["quiz_title"] = quiz["title"]
-    return render_template("host.html")
+    return render_template("new_quiz.html")
+
+
+@app.route("/join")
+def join_page():
+    return render_template("join.html")
+
+
+@app.route("/quiz/<int:quiz_id>/host")
+def host_page(quiz_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    quiz = database.get_quiz(quiz_id, session["user_id"])
+    if not quiz:
+        return redirect(url_for("dashboard"))
+    return render_template("host.html", quiz=quiz)
+
+
+# --------------------------------------------------------------------------
+# JSON API (used by student_client.py and host.js)
+# --------------------------------------------------------------------------
+@app.route("/api/login_check", methods=["POST"])
+def api_login_check():
+    data = request.get_json(force=True, silent=True) or {}
+    user = database.verify_user(
+        str(data.get("email", "")).strip().lower(), str(data.get("password", ""))
+    )
+    if user:
+        return jsonify(ok=True, email=user["email"])
+    return jsonify(ok=False), 401
 
 
 @app.route("/api/question")
 def api_question():
-    with state_lock:
-        if not state["questions"]:
-            return jsonify({"question": None})
-        q = state["questions"][state["q_index"]]
-        return jsonify({
-            "index": state["q_index"],
-            "total": len(state["questions"]),
-            "question": q["question"],
-            "choices": q["choices"],
-            "locked_answer": state["locked_answer"],
-        })
+    q = current_question()
+    return jsonify(q) if q else ("", 204)
 
 
 @app.route("/api/host_question")
 def api_host_question():
-    with state_lock:
-        if not state["questions"]:
-            return jsonify({"question": None})
-        q = state["questions"][state["q_index"]]
-        locked = state["locked_answer"]
-        return jsonify({
-            "index": state["q_index"],
-            "total": len(state["questions"]),
-            "quiz_title": state["quiz_title"],
-            "question": q["question"],
-            "choices": q["choices"],
-            "answer": q["answer"],
-            "locked_answer": locked,
-            "is_correct": (locked == q["answer"]) if locked else None,
-        })
+    return jsonify(host_payload() or {})
+
+
+# --------------------------------------------------------------------------
+# SocketIO events
+# --------------------------------------------------------------------------
+@socketio.on("next_question")
+def on_next_question():
+    """Host advances; wraps at the end and clears the lock."""
+    if live["quiz"] is None:
+        return
+    live["index"] = (live["index"] + 1) % len(live["quiz"]["questions"])
+    live["locked_answer"] = None
+    live["locked_name"] = None
+    emit("question_update", host_payload(), broadcast=True)
 
 
 @socketio.on("submit_answer")
-def submit_answer(data):
-    choice = (data or {}).get("choice")
-    if choice not in ("A", "B", "C", "D"):
+def on_submit_answer(data):
+    """Joiner locks a choice; first lock wins for the current question."""
+    if live["quiz"] is None or live["locked_answer"] is not None:
         return
-    with state_lock:
-        if state["locked_answer"] is not None:
-            return
-        state["locked_answer"] = choice
-    socketio.emit("answer_locked", {"choice": choice})
+    choice = str(data.get("choice", "")).upper()
+    live["locked_answer"] = choice
+    live["locked_name"] = str(data.get("name", "guest"))[:40]
+    emit("answer_locked", host_payload(), broadcast=True)
 
 
-@socketio.on("next_question")
-def next_question():
-    with state_lock:
-        if not state["questions"]:
-            return
-        state["q_index"] = (state["q_index"] + 1) % len(state["questions"])
-        state["locked_answer"] = None
-        q = state["questions"][state["q_index"]]
-        idx = state["q_index"]
-    socketio.emit("question_update", {
-        "index": idx, "total": len(state["questions"]),
-        "question": q["question"], "choices": q["choices"],
-    })
+@socketio.on("load_quiz")
+def on_load_quiz(data):
+    """Host page tells the server which quiz to serve; resets to question 0."""
+    quiz = database.get_quiz(int(data.get("quiz_id", 0)))
+    if not quiz or not quiz["questions"]:
+        return
+    live.update(
+        quiz_id=quiz["id"], quiz=quiz, index=0,
+        locked_answer=None, locked_name=None,
+    )
+    emit("question_update", host_payload(), broadcast=True)
 
 
-@app.route("/")
-def index():
-    if "user_id" in session:
-        return redirect(url_for("dashboard"))
-    return redirect(url_for("login"))
-
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+database.init_db()
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    print(f"\nTeacher: http://<this-ip>:{port}/signup")
-    print(f"Students: student_client.py --server http://<this-ip>:{port}\n")
-    socketio.run(app, host="0.0.0.0", port=port)
+    socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
