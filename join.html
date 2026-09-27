@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Join — GestureLock{% endblock %}
+{% block head %}
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+{% endblock %}
+{% block content %}
+  <h1>Join a quiz</h1>
+
+  <div id="join-form">
+    <label>Display name (shown to the host)</label>
+    <input type="text" id="display-name" maxlength="30" required>
+    <p class="muted-link">Camera frames are streamed to the server for OpenCV processing during the quiz and are never stored.</p>
+    <button type="button" id="start-btn">Enable camera &amp; join</button>
+    <div class="error" id="join-error" style="display:none;"></div>
+  </div>
+
+  <div id="quiz-view" style="display:none;">
+    <h2 id="question" class="big-title">Waiting for the host…</h2>
+    <canvas id="overlay"></canvas>
+    <div class="status" id="status">Show 1–4 fingers to pick A–D, thumbs-up on your other hand to confirm. Hold both for 1.2s.</div>
+  </div>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='join.js') }}" type="module"></script>
+{% endblock %}

@@ -1,19 +1,21 @@
-"""GestureLock — Flask + SocketIO server"""
+"""GestureLock — Flask + SocketIO server (with server-side OpenCV pipeline)"""
 
 import eventlet
 eventlet.monkey_patch()  # must run before socket/ssl imports
 
 import os
 import re
+import time
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit
 
 import database
+import vision
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-insecure-key")
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=2_000_000)
 
 # --------------------------------------------------------------------------
 # Live session state (in-memory, one quiz at a time)
@@ -25,6 +27,10 @@ live = {
     "locked_answer": None,
     "locked_name": None,
 }
+
+# Per-joiner gesture state, keyed by socket id. The hold-to-lock logic now
+# runs on the SERVER: the browser only streams frames and renders results.
+joiners = {}
 
 
 def current_question():
@@ -53,6 +59,22 @@ def host_payload():
         live["locked_answer"] == item["answer"] if live["locked_answer"] else None
     )
     return payload
+
+
+def reset_joiners():
+    """New question -> every joiner must gesture again."""
+    for s in joiners.values():
+        s.update(pointing=None, hold_start=None, locked=None)
+
+
+def lock_answer(choice, name):
+    """First lock of the current question wins; broadcast to host + joiners."""
+    if live["quiz"] is None or live["locked_answer"] is not None:
+        return False
+    live["locked_answer"] = choice
+    live["locked_name"] = name
+    emit("answer_locked", host_payload(), broadcast=True)
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -189,6 +211,69 @@ def api_host_question():
 # --------------------------------------------------------------------------
 # SocketIO events
 # --------------------------------------------------------------------------
+@socketio.on("connect")
+def on_connect():
+    joiners[request.sid] = {
+        "name": "guest", "pointing": None, "hold_start": None, "locked": None,
+    }
+
+
+@socketio.on("disconnect")
+def on_disconnect():
+    joiners.pop(request.sid, None)
+
+
+@socketio.on("video_frame")
+def on_video_frame(data):
+    """Joiner streams a camera frame; we run the OpenCV pipeline on it,
+    track the hold-to-lock gesture server-side, and send back the
+    annotated frame plus this joiner's gesture state."""
+    state = joiners.get(request.sid)
+    if state is None:
+        return
+    state["name"] = str(data.get("name", "guest"))[:40]
+
+    annotated, (choice, confirmed) = vision.process(data.get("frame", ""))
+    if annotated is None:
+        return
+
+    now = time.monotonic()
+    if live["quiz"] is not None and state["locked"] is None:
+        if choice and confirmed:
+            if choice != state["pointing"]:
+                state["pointing"] = choice
+                state["hold_start"] = now
+            elif now - state["hold_start"] >= vision.HOLD_S:
+                state["locked"] = choice
+                lock_answer(choice, state["name"])
+        else:
+            state["pointing"] = None
+            state["hold_start"] = None
+
+    progress = 0.0
+    if state["pointing"] and state["hold_start"]:
+        progress = min((now - state["hold_start"]) / vision.HOLD_S, 1.0)
+
+    emit("gesture_state", {
+        "pointing": state["pointing"],
+        "progress": progress,
+        "locked": state["locked"],
+        "choice": choice,
+        "confirmed": confirmed,
+    })
+    emit("annotated_frame", {"frame": annotated})
+
+
+@socketio.on("submit_answer")
+def on_submit_answer(data):
+    """Backwards-compatible escape hatch: a client may lock directly."""
+    if live["locked_answer"] is not None:
+        return
+    choice = str(data.get("choice", "")).upper()
+    if choice in ("A", "B", "C", "D"):
+        lock_answer(choice, str(data.get("name", "guest"))[:40])
+
+
 @socketio.on("next_question")
 def on_next_question():
     """Host advances; wraps at the end and clears the lock."""
@@ -197,18 +282,8 @@ def on_next_question():
     live["index"] = (live["index"] + 1) % len(live["quiz"]["questions"])
     live["locked_answer"] = None
     live["locked_name"] = None
+    reset_joiners()
     emit("question_update", host_payload(), broadcast=True)
-
-
-@socketio.on("submit_answer")
-def on_submit_answer(data):
-    """Joiner locks a choice; first lock wins for the current question."""
-    if live["quiz"] is None or live["locked_answer"] is not None:
-        return
-    choice = str(data.get("choice", "")).upper()
-    live["locked_answer"] = choice
-    live["locked_name"] = str(data.get("name", "guest"))[:40]
-    emit("answer_locked", host_payload(), broadcast=True)
 
 
 @socketio.on("load_quiz")
@@ -221,6 +296,7 @@ def on_load_quiz(data):
         quiz_id=quiz["id"], quiz=quiz, index=0,
         locked_answer=None, locked_name=None,
     )
+    reset_joiners()
     emit("question_update", host_payload(), broadcast=True)
 
 

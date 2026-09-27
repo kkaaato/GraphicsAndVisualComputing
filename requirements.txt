@@ -4,3 +4,6 @@ eventlet
 gunicorn
 werkzeug
 requests
+numpy
+opencv-python-headless
+mediapipe
