@@ -143,6 +143,10 @@ def parse_questions(raw):
 
 
 @app.route("/")
+def home():
+    return render_template("home.html")
+
+
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
