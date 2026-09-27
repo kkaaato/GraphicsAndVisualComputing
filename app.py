@@ -1,21 +1,21 @@
-"""GestureLock — Flask + SocketIO server (with server-side OpenCV pipeline)"""
-
-import eventlet
-eventlet.monkey_patch()  # must run before socket/ssl imports
+"""GestureLock — Flask + SocketIO server."""
 
 import os
 import re
-import time
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit
 
 import database
-import vision
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-insecure-key")
-socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=2_000_000)
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="threading",
+    max_http_buffer_size=2_000_000,
+)
 
 # --------------------------------------------------------------------------
 # Live session state (in-memory, one quiz at a time)
@@ -28,8 +28,8 @@ live = {
     "locked_name": None,
 }
 
-# Per-joiner gesture state, keyed by socket id. The hold-to-lock logic now
-# runs on the SERVER: the browser only streams frames and renders results.
+# Per-joiner session state, keyed by socket id. Gesture recognition runs in
+# the browser with MediaPipe Tasks; the server receives only final answers.
 joiners = {}
 
 
@@ -223,50 +223,9 @@ def on_disconnect():
     joiners.pop(request.sid, None)
 
 
-@socketio.on("video_frame")
-def on_video_frame(data):
-    """Joiner streams a camera frame; we run the OpenCV pipeline on it,
-    track the hold-to-lock gesture server-side, and send back the
-    annotated frame plus this joiner's gesture state."""
-    state = joiners.get(request.sid)
-    if state is None:
-        return
-    state["name"] = str(data.get("name", "guest"))[:40]
-
-    annotated, (choice, confirmed) = vision.process(data.get("frame", ""))
-    if annotated is None:
-        return
-
-    now = time.monotonic()
-    if live["quiz"] is not None and state["locked"] is None:
-        if choice and confirmed:
-            if choice != state["pointing"]:
-                state["pointing"] = choice
-                state["hold_start"] = now
-            elif now - state["hold_start"] >= vision.HOLD_S:
-                state["locked"] = choice
-                lock_answer(choice, state["name"])
-        else:
-            state["pointing"] = None
-            state["hold_start"] = None
-
-    progress = 0.0
-    if state["pointing"] and state["hold_start"]:
-        progress = min((now - state["hold_start"]) / vision.HOLD_S, 1.0)
-
-    emit("gesture_state", {
-        "pointing": state["pointing"],
-        "progress": progress,
-        "locked": state["locked"],
-        "choice": choice,
-        "confirmed": confirmed,
-    })
-    emit("annotated_frame", {"frame": annotated})
-
-
 @socketio.on("submit_answer")
 def on_submit_answer(data):
-    """Backwards-compatible escape hatch: a client may lock directly."""
+    """Lock an answer selected by the browser's MediaPipe Tasks client."""
     if live["locked_answer"] is not None:
         return
     choice = str(data.get("choice", "")).upper()

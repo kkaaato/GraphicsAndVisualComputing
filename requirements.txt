@@ -1,9 +1,6 @@
 flask
 flask-socketio
-eventlet
 gunicorn
+simple-websocket
 werkzeug
 requests
-numpy
-opencv-python-headless
-mediapipe
