@@ -203,6 +203,9 @@ def api_login_check():
 
 @app.route("/api/question")
 def api_question():
+    code = request.args.get("code", "").strip()
+    if not live["quiz"] or not code or code != str(live["quiz_id"]):
+        return "", 204
     q = current_question()
     return jsonify(q) if q else ("", 204)
 

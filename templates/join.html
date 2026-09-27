@@ -7,11 +7,14 @@
   <h1>Join a quiz</h1>
 
   <div id="join-form">
+    <label for="join-code">Quiz code</label>
+    <input type="text" id="join-code" value="{{ request.args.get('code', '') }}" required>
     <label>Display name (shown to the host)</label>
     <input type="text" id="display-name" maxlength="30" required>
     <p class="muted-link">Your camera feed is processed on this device only and is never sent or recorded.</p>
     <button type="button" id="start-btn">Enable camera &amp; join</button>
     <div class="error" id="join-error" style="display:none;"></div>
+    <p class="muted-link"><a href="{{ url_for('home') }}">Back</a></p>
   </div>
 
   <div id="quiz-view" style="display:none;">

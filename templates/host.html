@@ -6,6 +6,12 @@
 {% block content %}
   <h1 class="eyebrow">Question <span id="q-num">1</span> of <span id="q-total">-</span></h1>
   <h2 id="question" class="big-title">Loading…</h2>
+  <div class="join-details">
+    <strong>Join this quiz</strong>
+    <label for="join-link">Share this link</label>
+    <input id="join-link" type="text" value="{{ url_for('join_page', code=quiz.id, _external=True) }}" readonly>
+    <p>Or give participants code <strong>{{ quiz.id }}</strong></p>
+  </div>
   <div id="choices"></div>
   <div class="status" id="status">Waiting for an answer…</div>
   <button id="next-btn" type="button">Next Question</button>

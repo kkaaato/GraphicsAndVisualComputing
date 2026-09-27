@@ -3,6 +3,7 @@
 {% block content %}
   <h1>My Quizzes</h1>
   <p class="muted-link">Logged in as {{ email }} — <a href="{{ url_for('logout') }}">log out</a></p>
+  <p class="muted-link"><a href="{{ url_for('home') }}">Back to home</a></p>
   {% for quiz in quizzes %}
     <div class="quiz-row">
       <span>{{ quiz.title }}</span>

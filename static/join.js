@@ -10,6 +10,8 @@ let currentQuestion = null;
 let lockedAnswer = null;
 let pointing = null;
 let holdStart = null;
+let joinCode = new URLSearchParams(window.location.search).get("code") ||
+  document.getElementById("join-code").value.trim();
 
 const video = document.createElement("video");
 video.autoplay = true;
@@ -22,7 +24,8 @@ const statusEl = document.getElementById("status");
 
 // ---------------------------------------------------------------- question state
 async function refreshQuestion() {
-  const r = await fetch("/api/question");
+  const query = joinCode ? `?code=${encodeURIComponent(joinCode)}` : "";
+  const r = await fetch(`/api/question${query}`);
   if (r.status === 204) return;
   currentQuestion = await r.json();
   lockedAnswer = null;
@@ -170,8 +173,14 @@ function track(landmarker) {
 document.getElementById("start-btn").addEventListener("click", async () => {
   const input = document.getElementById("display-name");
   const err = document.getElementById("join-error");
+  const code = document.getElementById("join-code").value.trim();
   displayName = input.value.trim();
-  if (!displayName) return;
+  if (!code || !displayName) {
+    err.style.display = "block";
+    err.textContent = "Enter the quiz code and your display name.";
+    return;
+  }
+  joinCode = code;
 
   try {
     await startCamera();
