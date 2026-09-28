@@ -35,6 +35,8 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             owner_id INTEGER NOT NULL,
             title TEXT NOT NULL,
+            show_correct_answer INTEGER NOT NULL DEFAULT 0,
+            show_scoreboard INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (owner_id) REFERENCES users(id)
         );
 
@@ -52,6 +54,11 @@ def init_db():
             FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
         );
     """)
+    quiz_columns = {row["name"] for row in conn.execute("PRAGMA table_info(quizzes)")}
+    if "show_correct_answer" not in quiz_columns:
+        conn.execute("ALTER TABLE quizzes ADD COLUMN show_correct_answer INTEGER NOT NULL DEFAULT 0")
+    if "show_scoreboard" not in quiz_columns:
+        conn.execute("ALTER TABLE quizzes ADD COLUMN show_scoreboard INTEGER NOT NULL DEFAULT 0")
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(questions)")}
     if "time_limit" not in columns:
         conn.execute("ALTER TABLE questions ADD COLUMN time_limit INTEGER NOT NULL DEFAULT 30")
@@ -96,14 +103,15 @@ def get_user(user_id):
 # --------------------------------------------------------------------------
 # Quizzes and questions
 # --------------------------------------------------------------------------
-def create_quiz(owner_id, title, questions):
+def create_quiz(owner_id, title, questions, show_correct_answer=False, show_scoreboard=False):
     """
     questions: list of dicts with keys
     question_text, choice_a, choice_b, choice_c, choice_d, correct_letter, time_limit
     """
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO quizzes (owner_id, title) VALUES (?, ?)", (owner_id, title)
+        "INSERT INTO quizzes (owner_id, title, show_correct_answer, show_scoreboard) VALUES (?, ?, ?, ?)",
+        (owner_id, title, int(show_correct_answer), int(show_scoreboard)),
     )
     quiz_id = cur.lastrowid
     for i, q in enumerate(questions):
@@ -133,10 +141,16 @@ def get_quiz_for_edit(quiz_id, owner_id):
         "SELECT * FROM questions WHERE quiz_id = ? ORDER BY position", (quiz_id,)
     ).fetchall()
     conn.close()
-    return {"id": quiz["id"], "title": quiz["title"], "questions": [dict(q) for q in questions]}
+    return {
+        "id": quiz["id"],
+        "title": quiz["title"],
+        "show_correct_answer": bool(quiz["show_correct_answer"]),
+        "show_scoreboard": bool(quiz["show_scoreboard"]),
+        "questions": [dict(q) for q in questions],
+    }
 
 
-def update_quiz(quiz_id, owner_id, title, questions):
+def update_quiz(quiz_id, owner_id, title, questions, show_correct_answer=False, show_scoreboard=False):
     """Overwrites a quiz's title and questions. Only the owner can update it.
     Returns True if the quiz was found and updated, False otherwise."""
     conn = get_db()
@@ -146,7 +160,10 @@ def update_quiz(quiz_id, owner_id, title, questions):
     if not owned:
         conn.close()
         return False
-    conn.execute("UPDATE quizzes SET title = ? WHERE id = ?", (title, quiz_id))
+    conn.execute(
+        "UPDATE quizzes SET title = ?, show_correct_answer = ?, show_scoreboard = ? WHERE id = ?",
+        (title, int(show_correct_answer), int(show_scoreboard), quiz_id),
+    )
     conn.execute("DELETE FROM questions WHERE quiz_id = ?", (quiz_id,))
     for i, q in enumerate(questions):
         conn.execute(
@@ -188,6 +205,8 @@ def get_quiz(quiz_id, owner_id=None):
     return {
         "id": quiz["id"],
         "title": quiz["title"],
+        "show_correct_answer": bool(quiz["show_correct_answer"]),
+        "show_scoreboard": bool(quiz["show_scoreboard"]),
         "questions": [
             {
                 "question": q["question_text"],

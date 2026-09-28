@@ -6,6 +6,7 @@ import time
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from flask_socketio import SocketIO, emit
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 import database
 
@@ -17,6 +18,7 @@ socketio = SocketIO(
     async_mode="threading",
     max_http_buffer_size=2_000_000,
 )
+score_ticket_serializer = URLSafeTimedSerializer(app.secret_key, salt="quiz-scoreboard")
 
 
 @app.context_processor
@@ -36,6 +38,11 @@ live = {
     "locked_name": None,
     "question_started_at": None,
     "join_code": None,
+    "host_sid": None,
+    "participants": {},
+    "answers": {},
+    "ended": False,
+    "scoreboard": None,
 }
 
 # Per-joiner session state, keyed by socket id. Gesture recognition runs in
@@ -67,10 +74,7 @@ def host_payload():
         return None
     item = live["quiz"]["questions"][payload["index"]]
     payload["answer"] = item["answer"]
-    payload["locked_answer"] = live["locked_answer"]
-    payload["is_correct"] = (
-        live["locked_answer"] == item["answer"] if live["locked_answer"] else None
-    )
+    payload["answers_received"] = len(live["answers"])
     return payload
 
 
@@ -189,7 +193,11 @@ def new_quiz():
             return render_template(
                 "new_quiz.html", error="Format: question|A|B|C|D|correctLetter"
             )
-        database.create_quiz(session["user_id"], request.form["title"].strip(), questions)
+        database.create_quiz(
+            session["user_id"], request.form["title"].strip(), questions,
+            show_correct_answer=request.form.get("show_correct_answer") == "1",
+            show_scoreboard=request.form.get("show_scoreboard") == "1",
+        )
         return redirect(url_for("dashboard", saved=1))
     return render_template("new_quiz.html")
 
@@ -205,7 +213,11 @@ def edit_quiz(quiz_id):
         questions = parse_questions(request.form.get("questions", ""))
         if questions is None:
             return render_template("new_quiz.html", quiz=quiz, error="Add valid questions, answers, correct answers, and timers.")
-        database.update_quiz(quiz_id, session["user_id"], request.form["title"].strip(), questions)
+        database.update_quiz(
+            quiz_id, session["user_id"], request.form["title"].strip(), questions,
+            show_correct_answer=request.form.get("show_correct_answer") == "1",
+            show_scoreboard=request.form.get("show_scoreboard") == "1",
+        )
         return redirect(url_for("dashboard", saved=1))
     return render_template("new_quiz.html", quiz=quiz)
 
@@ -225,6 +237,38 @@ def host_page(quiz_id):
     return render_template("host.html", quiz=quiz)
 
 
+@app.route("/quiz/<int:quiz_id>/scoreboard")
+def scoreboard_page(quiz_id):
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    quiz = database.get_quiz(quiz_id, session["user_id"])
+    if not quiz:
+        return redirect(url_for("dashboard"))
+    if live["quiz_id"] != quiz_id or not live["ended"]:
+        return redirect(url_for("host_page", quiz_id=quiz_id))
+    return render_template("scoreboard.html", quiz=quiz, scoreboard=live["scoreboard"] or [])
+
+
+@app.route("/join/scoreboard/<ticket>")
+def participant_scoreboard_page(ticket):
+    try:
+        result = score_ticket_serializer.loads(ticket, max_age=86400)
+    except (BadSignature, SignatureExpired):
+        return redirect(url_for("join_page"))
+    if (not live["ended"] or result.get("quiz_id") != live["quiz_id"]
+            or result.get("sid") not in live["participants"]):
+        return redirect(url_for("join_page"))
+    participant = live["participants"][result["sid"]]
+    return render_template(
+        "scoreboard.html",
+        quiz=live["quiz"],
+        scoreboard=live["scoreboard"] or [],
+        participant=True,
+        personal_score=participant["score"],
+        show_leaderboard=live["quiz"].get("show_scoreboard", False),
+    )
+
+
 # --------------------------------------------------------------------------
 # JSON API (used by student_client.py and host.js)
 # --------------------------------------------------------------------------
@@ -242,7 +286,7 @@ def api_login_check():
 @app.route("/api/question")
 def api_question():
     code = request.args.get("code", "").strip()
-    if not live["quiz"] or not code or code != live["join_code"]:
+    if not live["quiz"] or live["ended"] or not code or code != live["join_code"]:
         return "", 204
     q = current_question()
     return jsonify(q) if q else ("", 204)
@@ -266,30 +310,108 @@ def on_connect():
 @socketio.on("disconnect")
 def on_disconnect():
     joiners.pop(request.sid, None)
+    participant = live["participants"].get(request.sid)
+    if participant:
+        participant["online"] = False
+        if live["host_sid"]:
+            socketio.emit("participant_left", {"sid": request.sid}, to=live["host_sid"])
+
+
+@socketio.on("join_quiz")
+def on_join_quiz(data):
+    participant = joiners.get(request.sid)
+    if not participant or not live["quiz"] or live["ended"]:
+        return
+    code = str(data.get("code", "")).strip().upper()
+    if code != live["join_code"] or request.sid == live["host_sid"]:
+        return
+    name = str(data.get("name", "guest")).strip()[:40] or "guest"
+    participant["name"] = name
+    is_new = request.sid not in live["participants"]
+    live["participants"].setdefault(
+        request.sid, {"name": name, "score": 0, "online": True, "last_frame_at": 0}
+    )
+    live["participants"][request.sid]["online"] = True
+    if is_new and live["host_sid"]:
+        socketio.emit("participant_joined", {"sid": request.sid, "name": name}, to=live["host_sid"])
+    socketio.emit("join_confirmed", {}, to=request.sid)
+
+
+@socketio.on("participant_camera")
+def on_participant_camera(data):
+    sid = request.sid
+    if (live["ended"] or not live["quiz"] or sid not in live["participants"]
+            or not live["host_sid"]):
+        return
+    participant = live["participants"][sid]
+    now = time.monotonic()
+    if now - participant["last_frame_at"] < 0.8:
+        return
+    frame = str(data.get("frame", ""))
+    if not frame.startswith("data:image/jpeg;base64,") or len(frame) > 120_000:
+        return
+    socketio.emit("participant_camera", {
+        "sid": sid,
+        "name": participant["name"],
+        "frame": frame,
+    }, to=live["host_sid"])
+    participant["last_frame_at"] = now
 
 
 @socketio.on("submit_answer")
 def on_submit_answer(data):
-    """Lock an answer selected by the browser's MediaPipe Tasks client."""
-    if live["locked_answer"] is not None:
+    """Record one answer per participant for the active question."""
+    sid = request.sid
+    if live["quiz"] is None or live["ended"] or sid not in live["participants"]:
         return
     choice = str(data.get("choice", "")).upper()
-    if choice in ("A", "B", "C", "D"):
-        lock_answer(choice, str(data.get("name", "guest"))[:40])
+    item = live["quiz"]["questions"][live["index"]]
+    if (choice not in item["choices"] or sid in live["answers"]
+            or time.time() - live["question_started_at"] >= item["time_limit"]):
+        return
+    live["answers"][sid] = choice
+    correct = choice == item["answer"]
+    if correct:
+        live["participants"][sid]["score"] += 1
+    result = {"accepted": True, "selected_answer": choice}
+    if live["quiz"].get("show_correct_answer"):
+        result.update(correct=correct, correct_answer=item["answer"],
+                      correct_text=item["choices"][item["answer"]])
+    socketio.emit("answer_result", result, to=sid)
+    if live["host_sid"]:
+        socketio.emit("answer_locked", host_payload(), to=live["host_sid"])
 
 
 @socketio.on("next_question")
 def on_next_question():
-    """Host advances; wraps at the end and clears the lock."""
-    if live["quiz"] is None:
+    """Host advances after timeout, or closes the quiz after the final timeout."""
+    if live["quiz"] is None or live["ended"]:
         return
     item = live["quiz"]["questions"][live["index"]]
     if time.time() - live["question_started_at"] < item["time_limit"]:
         return
-    live["index"] = (live["index"] + 1) % len(live["quiz"]["questions"])
+    if live["index"] + 1 >= len(live["quiz"]["questions"]):
+        live["ended"] = True
+        scoreboard = sorted(
+            (dict(name=person["name"], score=person["score"])
+             for person in live["participants"].values()),
+            key=lambda person: (-person["score"], person["name"].casefold()),
+        )
+        live["scoreboard"] = scoreboard
+        for sid, person in live["participants"].items():
+            ticket = score_ticket_serializer.dumps({"quiz_id": live["quiz_id"], "sid": sid})
+            socketio.emit("quiz_ended", {
+                "score": person["score"],
+                "scoreboard_url": url_for("participant_scoreboard_page", ticket=ticket),
+            }, to=sid)
+        if live["host_sid"]:
+            socketio.emit("quiz_ended", {"scoreboard": scoreboard}, to=live["host_sid"])
+        return
+    live["index"] += 1
     live["locked_answer"] = None
     live["locked_name"] = None
     live["question_started_at"] = time.time()
+    live["answers"] = {}
     reset_joiners()
     emit("question_update", host_payload(), broadcast=True)
 
@@ -308,6 +430,10 @@ def on_load_quiz(data):
         locked_answer=None, locked_name=None,
         question_started_at=time.time(),
         join_code=code,
+        host_sid=request.sid,
+        participants={},
+        answers={},
+        ended=False,
     )
     reset_joiners()
     emit("question_update", host_payload(), broadcast=True)

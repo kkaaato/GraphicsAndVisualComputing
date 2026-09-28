@@ -5,6 +5,14 @@
   <form method="post">
     <label>Title</label>
     <input type="text" name="title" value="{{ quiz.title if quiz else '' }}" required>
+    <label class="setting-toggle">
+      <input type="checkbox" name="show_correct_answer" value="1"{% if quiz and quiz.show_correct_answer %} checked{% endif %}>
+      Show the correct answer to participants after they answer
+    </label>
+    <label class="setting-toggle">
+      <input type="checkbox" name="show_scoreboard" value="1"{% if quiz and quiz.show_scoreboard %} checked{% endif %}>
+      Let participants see the final leaderboard
+    </label>
     <div id="question-list"></div>
     <button id="add-question" type="button">+ Add question</button>
     <textarea id="questions" name="questions" hidden></textarea>

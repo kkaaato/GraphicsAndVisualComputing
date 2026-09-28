@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Scoreboard — {{ quiz.title }}{% endblock %}
+{% block content %}
+  <h1>Scoreboard</h1>
+  <p class="muted-link">{{ quiz.title }} · Final results</p>
+  {% if participant %}
+    <section class="question-builder personal-result">
+      <h2>Your score</h2>
+      <p>{{ personal_score }} correct answer{{ '' if personal_score == 1 else 's' }}</p>
+    </section>
+  {% endif %}
+  {% if scoreboard and (not participant or show_leaderboard) %}
+    <div class="scoreboard-table-wrap">
+      <table>
+        <thead><tr><th>Rank</th><th>Participant</th><th>Score</th></tr></thead>
+        <tbody>
+          {% for participant in scoreboard %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td>{{ participant.name }}</td>
+              <td>{{ participant.score }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% elif not participant or show_leaderboard %}
+    <p>No participants joined this quiz.</p>
+  {% else %}
+    <p>The host chose not to share the leaderboard.</p>
+  {% endif %}
+  <nav class="page-actions">
+    {% if participant %}
+      <a href="{{ url_for('join_page') }}">Join another quiz</a>
+      <a href="{{ url_for('home') }}">Home</a>
+    {% else %}
+      <a href="{{ url_for('host_page', quiz_id=quiz.id) }}">Back to host</a>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('home') }}">Home</a>
+    {% endif %}
+  </nav>
+{% endblock %}

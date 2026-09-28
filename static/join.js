@@ -10,6 +10,12 @@ let currentQuestion = null;
 let lockedAnswer = null;
 let pointing = null;
 let holdStart = null;
+let quizEnded = false;
+let lastPreviewAt = 0;
+const previewCanvas = document.createElement("canvas");
+previewCanvas.width = 320;
+previewCanvas.height = 180;
+const previewContext = previewCanvas.getContext("2d");
 let joinCode = new URLSearchParams(window.location.search).get("code") ||
   document.getElementById("join-code").value.trim();
 
@@ -28,6 +34,9 @@ async function refreshQuestion() {
   const r = await fetch(`/api/question${query}`);
   if (r.status === 204) return;
   currentQuestion = await r.json();
+  if (displayName) {
+    socket.emit("join_quiz", { code: joinCode, name: displayName });
+  }
   lockedAnswer = null;
   pointing = null;
   holdStart = null;
@@ -35,6 +44,23 @@ async function refreshQuestion() {
 }
 
 socket.on("question_update", refreshQuestion);
+socket.on("answer_result", (result) => {
+  lockedAnswer = result.selected_answer;
+  if (Object.hasOwn(result, "correct_answer")) {
+    statusEl.textContent = result.correct
+      ? `Correct! The answer is ${result.correct_answer}. ${result.correct_text}`
+      : `Answer received. The correct answer is ${result.correct_answer}. ${result.correct_text}`;
+    statusEl.className = result.correct ? "status correct" : "status wrong";
+  } else {
+    statusEl.textContent = "Answer received.";
+    statusEl.className = "status";
+  }
+});
+socket.on("quiz_ended", ({ scoreboard_url }) => {
+  quizEnded = true;
+  video.srcObject?.getTracks().forEach((track) => track.stop());
+  window.location.assign(scoreboard_url);
+});
 
 // ---------------------------------------------------------------- gesture logic
 function fingersUp(lm) {
@@ -49,7 +75,8 @@ function fingersUp(lm) {
 
 function choiceFrom(states) {
   const count = states.slice(1).filter(Boolean).length;
-  return { 1: "A", 2: "B", 3: "C", 4: "D" }[count] || null;
+  const choice = { 1: "A", 2: "B", 3: "C", 4: "D" }[count];
+  return choice && currentQuestion?.choices[choice] ? choice : null;
 }
 
 function isThumbsUp(states, lm) {
@@ -93,8 +120,8 @@ function draw(now) {
 
   if (!currentQuestion) {
     ctx.fillStyle = "#ffffff";
-    ctx.font = "28px sans-serif";
-    ctx.fillText("Waiting for the host to start…", 24, 48);
+    ctx.font = `${Math.max(28, Math.round(w * 0.035))}px sans-serif`;
+    ctx.fillText("Waiting for the host to start…", Math.round(w * 0.02), Math.round(h * 0.07));
     return;
   }
 
@@ -104,10 +131,11 @@ function draw(now) {
   const y0 = h - (boxH + gap) * letters.length - gap;
 
   ctx.fillStyle = "rgba(20,20,20,0.85)";
-  ctx.fillRect(0, 0, w, 56);
+  const headerHeight = Math.round(h * 0.12);
+  ctx.fillRect(0, 0, w, headerHeight);
   ctx.fillStyle = "#ffffff";
-  ctx.font = "22px sans-serif";
-  ctx.fillText(currentQuestion.question.slice(0, 72), 14, 37);
+  ctx.font = `${Math.max(28, Math.round(w * 0.038))}px sans-serif`;
+  ctx.fillText(currentQuestion.question.slice(0, 72), Math.round(w * 0.02), Math.round(headerHeight * 0.68));
 
   letters.forEach((letter, i) => {
     const y = y0 + i * (boxH + gap);
@@ -125,23 +153,31 @@ function draw(now) {
     }
 
     ctx.fillStyle = "#141414";
-    ctx.font = "20px sans-serif";
-    ctx.fillText(`${letter}. ${currentQuestion.choices[letter]}`.slice(0, 58), 26, y + boxH / 2 + 7);
+    ctx.font = `${Math.max(24, Math.round(w * 0.032))}px sans-serif`;
+    ctx.fillText(`${letter}. ${currentQuestion.choices[letter]}`.slice(0, 58), Math.round(w * 0.025), y + boxH / 2 + Math.round(w * 0.01));
   });
 
   if (lockedAnswer) {
     ctx.fillStyle = "#2fb86e";
-    ctx.font = "22px sans-serif";
-    ctx.fillText(`Locked in: ${lockedAnswer}`, 16, h - 6);
+    ctx.font = `${Math.max(24, Math.round(w * 0.032))}px sans-serif`;
+    ctx.fillText(`Locked in: ${lockedAnswer}`, Math.round(w * 0.02), h - Math.round(h * 0.01));
   }
 }
 
 function track(landmarker) {
+  if (quizEnded) return;
   const now = performance.now();
   let choice = null;
   let confirmed = false;
 
   if (video.readyState >= 2) {
+    if (currentQuestion && Date.now() - lastPreviewAt >= 1000) {
+      previewContext.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
+      socket.emit("participant_camera", {
+        frame: previewCanvas.toDataURL("image/jpeg", 0.4),
+      });
+      lastPreviewAt = Date.now();
+    }
     const result = landmarker.detectForVideo(video, now);
     for (const lm of result.landmarks) {
       const states = fingersUp(lm);
@@ -181,6 +217,7 @@ document.getElementById("start-btn").addEventListener("click", async () => {
     return;
   }
   joinCode = code;
+  socket.emit("join_quiz", { code, name: displayName });
 
   try {
     await startCamera();

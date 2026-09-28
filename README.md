@@ -26,9 +26,11 @@ a browser on any device — no installs.
 ## Privacy
 
 Answers and display names are held in server memory for the live session only
-and are never written to the database. Camera frames are processed locally in
-the browser and are never sent to or stored by the server. Student joiners do
-not need accounts; account passwords are stored hashed.
+and are never written to the database. During an active quiz, low-resolution
+camera previews are sent to the host for live supervision; frames are relayed
+in memory and are never recorded or stored. Gesture recognition runs locally
+in the browser. Student joiners do not need accounts; account passwords are
+stored hashed.
 
 ## Deploy (Render)
 

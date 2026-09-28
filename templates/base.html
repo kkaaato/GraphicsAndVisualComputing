@@ -9,7 +9,8 @@
 </head>
 <body>
   <div class="app-shell">
-    <aside class="profile-panel">
+    <aside class="profile-drawer">
+      <button class="profile-tab" type="button" aria-label="Open profile">Profile</button>
       <h2>Profile</h2>
       {% if session.get('user_id') %}
         <p class="profile-status logged-in">● Logged in</p>
