@@ -51,19 +51,34 @@ function addQuestion(initial = null) {
     C: initial.choice_c,
     D: initial.choice_d,
   }) : null;
-  const card = document.createElement("section");
+  const card = document.createElement("details");
   card.className = "question-builder";
+  card.open = initial ? questionNumber === 1 : true;
+  if (!initial) [...questionList.children].forEach((c) => { c.open = false; });
   card.innerHTML = `
-    <div class="question-heading">
-      <h2>Question ${questionNumber}</h2>
+    <summary class="question-heading">
+      <span class="question-label">
+        <span class="question-title">Question ${questionNumber}</span>
+        <span class="question-preview"></span>
+      </span>
       <button type="button" class="remove-question">Remove question</button>
+    </summary>
+    <div class="question-body">
+      <input type="text" class="question-text" placeholder="Type your question" value="${questionText}" required>
+      <label>Time limit (seconds)</label>
+      <input type="number" class="time-limit" min="5" max="600" value="${initial ? initial.time_limit : 30}" required>
+      <div class="answer-list"></div>
+      <button type="button" class="add-answer">+ Add answer</button>
     </div>
-    <input type="text" class="question-text" placeholder="Type your question" value="${questionText}" required>
-    <label>Time limit (seconds)</label>
-    <input type="number" class="time-limit" min="5" max="600" value="${initial ? initial.time_limit : 30}" required>
-    <div class="answer-list"></div>
-    <button type="button" class="add-answer">+ Add answer</button>
   `;
+  const questionInput = card.querySelector(".question-text");
+  const preview = card.querySelector(".question-preview");
+  const syncPreview = () => {
+    const t = questionInput.value.trim();
+    preview.textContent = t ? `— ${t}` : "";
+  };
+  questionInput.addEventListener("input", syncPreview);
+  syncPreview();
 
   const answerList = card.querySelector(".answer-list");
   if (initial) {
@@ -77,11 +92,12 @@ function addQuestion(initial = null) {
   card.querySelector(".add-answer").addEventListener("click", () => {
     addAnswer(answerList, questionId);
   });
-  card.querySelector(".remove-question").addEventListener("click", () => {
+    card.querySelector(".remove-question").addEventListener("click", (event) => {
+    event.preventDefault();   // stop the click from toggling the dropdown
     if (questionList.children.length <= 1) return;
     card.remove();
     [...questionList.children].forEach((question, index) => {
-      question.querySelector("h2").textContent = `Question ${index + 1}`;
+      question.querySelector(".question-title").textContent = `Question ${index + 1}`;
     });
   });
   questionList.appendChild(card);
@@ -104,9 +120,10 @@ function serializeQuestions() {
   return lines.join("\n");
 }
 
-addQuestionButton.addEventListener("click", addQuestion);
-if (window.EDIT_QUIZ && window.EDIT_QUIZ.length) {
-  window.EDIT_QUIZ.forEach(addQuestion);
+addQuestionButton.addEventListener("click", () => addQuestion());
+const editData = JSON.parse(document.getElementById("edit-quiz-data").dataset.quiz);
+if (editData && editData.length) {
+  editData.forEach((q) => addQuestion(q));
 } else {
   addQuestion();
 }
@@ -120,3 +137,8 @@ form.addEventListener("submit", (event) => {
   }
   questionsField.value = serialized;
 });
+// if a hidden required field fails validation, open its dropdown so the error is visible
+form.addEventListener("invalid", (e) => {
+  const d = e.target.closest("details");
+  if (d) d.open = true;
+}, true);

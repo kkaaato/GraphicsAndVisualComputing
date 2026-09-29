@@ -12,6 +12,15 @@ let pointing = null;
 let holdStart = null;
 let quizEnded = false;
 let lastPreviewAt = 0;
+let timeLimit = 30;
+let questionEndsAt = null;   // ms timestamp when the current question ends
+let handsCount = 0;
+let handsMissingSince = null;
+let handWarning = "";
+
+function getTimeLeft() {
+  return questionEndsAt ? Math.max(0, (questionEndsAt - Date.now()) / 1000) : null;
+}
 const previewCanvas = document.createElement("canvas");
 previewCanvas.width = 320;
 previewCanvas.height = 180;
@@ -34,6 +43,10 @@ async function refreshQuestion() {
   const r = await fetch(`/api/question${query}`);
   if (r.status === 204) return;
   currentQuestion = await r.json();
+    timeLimit = currentQuestion.time_limit || 30;
+  const clockOffset = currentQuestion.server_time ? currentQuestion.server_time * 1000 - Date.now() : 0;
+  const startedMs = currentQuestion.started_at ? currentQuestion.started_at * 1000 : Date.now() + clockOffset;
+  questionEndsAt = startedMs + timeLimit * 1000 - clockOffset;
   if (displayName) {
     socket.emit("join_quiz", { code: joinCode, name: displayName });
   }
@@ -136,6 +149,24 @@ function draw(now) {
   ctx.fillStyle = "#ffffff";
   ctx.font = `${Math.max(28, Math.round(w * 0.038))}px sans-serif`;
   ctx.fillText(currentQuestion.question.slice(0, 72), Math.round(w * 0.02), Math.round(headerHeight * 0.68));
+   // countdown: progress bar under the header + number badge
+  const left = getTimeLeft();
+  if (left !== null) {
+    const frac = Math.min(left / timeLimit, 1);
+    const urgent = left <= 5;
+    ctx.fillStyle = "rgba(255,255,255,0.2)";
+    ctx.fillRect(0, headerHeight, w, 10);
+    ctx.fillStyle = urgent ? "#f87171" : frac < 0.5 ? "#fbbf24" : "#4ade80";
+    ctx.fillRect(0, headerHeight, w * frac, 10);
+    const label = left > 0 ? `${Math.ceil(left)}s` : "Time's up";
+    ctx.font = `bold ${Math.max(28, Math.round(w * 0.04))}px sans-serif`;
+    const tw = ctx.measureText(label).width + 32;
+    const th = Math.round(h * 0.09);
+    ctx.fillStyle = urgent ? "#dc2626" : "rgba(20,20,20,0.85)";
+    ctx.fillRect(w - tw - 14, headerHeight + 20, tw, th);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(label, w - tw + 2, headerHeight + 20 + th * 0.7);
+  }
 
   letters.forEach((letter, i) => {
     const y = y0 + i * (boxH + gap);
@@ -162,6 +193,17 @@ function draw(now) {
     ctx.font = `${Math.max(24, Math.round(w * 0.032))}px sans-serif`;
     ctx.fillText(`Locked in: ${lockedAnswer}`, Math.round(w * 0.02), h - Math.round(h * 0.01));
   }
+  if (handWarning) {
+    const bh = Math.round(h * 0.11);
+    const by = Math.round(h * 0.42);
+    ctx.fillStyle = "rgba(220, 38, 38, 0.88)";
+    ctx.fillRect(0, by, w, bh);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `bold ${Math.max(22, Math.round(w * 0.026))}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText(`⚠ ${handWarning}`, w / 2, by + bh * 0.62);
+    ctx.textAlign = "left";
+  }
 }
 
 function track(landmarker) {
@@ -179,13 +221,25 @@ function track(landmarker) {
       lastPreviewAt = Date.now();
     }
     const result = landmarker.detectForVideo(video, now);
+    handsCount = result.landmarks.length;
     for (const lm of result.landmarks) {
       const states = fingersUp(lm);
       choice = choiceFrom(states) || choice;
       if (isThumbsUp(states, lm)) confirmed = true;
     }
   }
-
+ // warn only after ~1s so it doesn't flicker
+  if (handsCount >= 2 || !currentQuestion || lockedAnswer) {
+    handsMissingSince = null;
+    handWarning = "";
+  } else {
+    handsMissingSince = handsMissingSince ?? now;
+    if (now - handsMissingSince > 1000) {
+      handWarning = handsCount === 0
+        ? "No hands detected — show your hands to the camera"
+        : "Only one hand visible — show both hands";
+    }
+  }
   if (currentQuestion && !lockedAnswer) {
     if (choice && confirmed) {
       if (choice !== pointing) {
@@ -216,12 +270,12 @@ document.getElementById("start-btn").addEventListener("click", async () => {
     err.textContent = "Enter the quiz code and your display name.";
     return;
   }
-  joinCode = code;
-  socket.emit("join_quiz", { code, name: displayName });
+    joinCode = code;
 
   try {
     await startCamera();
     const landmarker = await loadLandmarker();
+    socket.emit("join_quiz", { code, name: displayName });
     document.getElementById("join-form").style.display = "none";
     document.getElementById("quiz-view").style.display = "block";
     await refreshQuestion();

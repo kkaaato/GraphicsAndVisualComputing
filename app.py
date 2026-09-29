@@ -63,6 +63,7 @@ def current_question():
         "choices": item["choices"],
         "time_limit": item["time_limit"],
         "started_at": live["question_started_at"],
+        "server_time": time.time(),
         "join_code": live["join_code"],
     }
 

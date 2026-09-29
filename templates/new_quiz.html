@@ -22,8 +22,6 @@
   <p class="muted-link"><a href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
 {% endblock %}
 {% block scripts %}
-  <script>
-    window.EDIT_QUIZ = {{ quiz.questions | tojson if quiz else 'null' }};
-  </script>
+  <div id="edit-quiz-data" data-quiz='{{ (quiz.questions if quiz else None) | tojson }}' hidden></div>
   <script src="{{ url_for('static', filename='new_quiz.js') }}"></script>
 {% endblock %}
