@@ -19,7 +19,7 @@
     <button type="submit">Save quiz</button>
   </form>
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
-  <p class="muted-link"><a href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
+  <div class="btn-row"><a class="btn btn-secondary btn-small" href="{{ url_for('dashboard') }}">Back to dashboard</a></div>
 {% endblock %}
 {% block scripts %}
   <div id="edit-quiz-data" data-quiz='{{ (quiz.questions if quiz else None) | tojson }}' hidden></div>

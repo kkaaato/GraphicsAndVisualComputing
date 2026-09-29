@@ -9,14 +9,19 @@
   <div class="status" id="timer">Time remaining: --</div>
   <div class="join-details">
     <strong>Join this quiz</strong>
-    <label for="join-code">Choose a code, or leave blank to generate one</label>
+    <ol class="how-steps">
+      <li>Type a join code (or leave it blank for a random one), then press <em>Generate join link</em>.</li>
+      <li>Share the link or code. Participants appear below with a live camera preview.</li>
+      <li>Press <em>Start quiz</em>. Questions advance automatically when each timer ends.</li>
+    </ol>
+    <label for="join-code">Join code</label>
     <input id="join-code" type="text" maxlength="12" pattern="[A-Za-z0-9]+" placeholder="For example, MATH2026">
     <button id="generate-link-btn" type="button">Generate join link</button>
     <div id="share-link-area" hidden>
       <label for="join-link">Share this link</label>
       <input id="join-link" type="text" readonly>
       <p>Join code: <strong id="generated-code"></strong></p>
-      <button id="copy-link-btn" type="button">Copy link</button>
+      <button id="copy-link-btn" class="btn-secondary" type="button">Copy link</button>
     </div>
   </div>
   <div id="choices"></div>
@@ -25,14 +30,17 @@
     <h2>Participants <span id="participant-count">0</span></h2>
     <div id="participant-grid" class="participant-grid"></div>
     <div class="participant-pages">
-      <button id="previous-page" type="button" disabled>Previous</button>
+      <button id="previous-page" class="btn-secondary" type="button" disabled>Previous</button>
       <span id="page-label">Page 1 of 1</span>
-      <button id="next-page" type="button" disabled>Next</button>
+      <button id="next-page" class="btn-secondary" type="button" disabled>Next</button>
     </div>
   </section>
-  <button id="start-btn" type="button" disabled>Start Quiz</button>
-  <a id="scoreboard-link" class="button-link" href="{{ url_for('scoreboard_page', quiz_id=quiz.id) }}" hidden>View scoreboard</a>
-  <p class="muted-link"><a href="{{ url_for('dashboard') }}">Back to dashboard</a></p>
+  <button id="start-btn" type="button" disabled>Start quiz</button>
+  <a id="scoreboard-link" class="btn" href="{{ url_for('scoreboard_page', quiz_id=quiz.id) }}" hidden>View scoreboard</a>
+  <div class="btn-row">
+    <a class="btn btn-secondary btn-small" href="{{ url_for('dashboard') }}">Back to dashboard</a>
+    <a class="btn btn-secondary btn-small" href="{{ url_for('home') }}">Back to home</a>
+  </div>
 {% endblock %}
 {% block scripts %}
   <script>

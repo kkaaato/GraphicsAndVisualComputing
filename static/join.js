@@ -2,6 +2,9 @@ const socket = io();
 
 const COLORS = { A: "#ff6b57", B: "#2fb86e", C: "#ffc34b", D: "#8c6bff" };
 const HOLD_MS = 1200;
+const GRACE_MS = 350;      // a brief detection dropout won't reset the hold timer
+const SMOOTH_FRAMES = 5;   // majority vote over the last N frames to remove flicker
+const HOWTO_TEXT = "Pick an answer with 1–4 fingers on one hand, then give a thumbs-up with your other hand. Hold both for 1.2 seconds.";
 const MP_VERSION = "0.10.14";
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 
@@ -17,6 +20,13 @@ let questionEndsAt = null;   // ms timestamp when the current question ends
 let handsCount = 0;
 let handsMissingSince = null;
 let handWarning = "";
+let lastVideoTime = -1;
+let lastGoodAt = 0;
+let lastChoice = null;
+let lastConfirmed = false;
+let detectedLabel = "";
+const choiceVotes = [];
+const confirmVotes = [];
 
 function getTimeLeft() {
   return questionEndsAt ? Math.max(0, (questionEndsAt - Date.now()) / 1000) : null;
@@ -53,6 +63,8 @@ async function refreshQuestion() {
   lockedAnswer = null;
   pointing = null;
   holdStart = null;
+  statusEl.textContent = HOWTO_TEXT;
+  statusEl.className = "status";
   document.getElementById("question").textContent = currentQuestion.question;
 }
 
@@ -76,12 +88,22 @@ socket.on("quiz_ended", ({ scoreboard_url }) => {
 });
 
 // ---------------------------------------------------------------- gesture logic
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+// Compares landmark distances (not raw y values), so it works when the hand is
+// tilted, rotated, or at a different distance from the camera.
 function fingersUp(lm) {
   const wrist = lm[0];
-  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-  const states = [dist(lm[4], wrist) > dist(lm[3], wrist) + 0.02];
-  for (const [tip, pip] of [[8, 6], [12, 10], [16, 14], [20, 18]]) {
-    states.push(lm[tip].y < lm[pip].y - 0.02);
+  const palm = dist(lm[0], lm[9]) || 0.1;
+  // thumb is "out" when its tip is clearly farther from the pinky base than its knuckle is
+  const thumbOut =
+    dist(lm[4], lm[17]) > dist(lm[2], lm[17]) * 1.15 && dist(lm[4], lm[5]) > palm * 0.45;
+  const states = [thumbOut];
+  for (const [tip, pip, mcp] of [[8, 6, 5], [12, 10, 9], [16, 14, 13], [20, 18, 17]]) {
+    states.push(
+      dist(lm[tip], wrist) > dist(lm[pip], wrist) * 1.12 &&
+      dist(lm[tip], lm[mcp]) > palm * 0.55
+    );
   }
   return states;
 }
@@ -93,13 +115,32 @@ function choiceFrom(states) {
 }
 
 function isThumbsUp(states, lm) {
-  return states[0] && !states.slice(1).some(Boolean) && lm[4].y < lm[3].y - 0.02;
+  if (!states[0] || states.slice(1).some(Boolean)) return false;
+  const palm = dist(lm[0], lm[9]) || 0.1;
+  const rise = lm[2].y - lm[4].y;          // > 0 when the thumb tip is above its base
+  const sideways = Math.abs(lm[4].x - lm[2].x);
+  return rise > palm * 0.4 && rise > sideways * 0.8;
+}
+
+// Most common value in the last few frames (latest wins ties).
+function smooth(buffer, value) {
+  buffer.push(value);
+  if (buffer.length > SMOOTH_FRAMES) buffer.shift();
+  const counts = new Map();
+  let best = value;
+  let bestCount = 0;
+  for (const v of buffer) {
+    const c = (counts.get(v) || 0) + 1;
+    counts.set(v, c);
+    if (c >= bestCount) { best = v; bestCount = c; }
+  }
+  return best;
 }
 
 // ---------------------------------------------------------------- camera loop
 async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 1280, height: 720 },
+    video: { width: 1280, height: 720, facingMode: "user" },
     audio: false,
   });
   video.srcObject = stream;
@@ -115,14 +156,20 @@ async function loadLandmarker() {
   const fileset = await vision.FilesetResolver.forVisionTasks(
     `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`
   );
-  return vision.HandLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+  const options = (delegate) => ({
+    baseOptions: { modelAssetPath: MODEL_URL, delegate },
     runningMode: "VIDEO",
     numHands: 2,
-    minHandDetectionConfidence: 0.7,
-    minHandPresenceConfidence: 0.7,
-    minTrackingConfidence: 0.7,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5,
   });
+  try {
+    return await vision.HandLandmarker.createFromOptions(fileset, options("GPU"));
+  } catch {
+    // some devices/browsers have no usable GPU delegate
+    return vision.HandLandmarker.createFromOptions(fileset, options("CPU"));
+  }
 }
 
 function draw(now) {
@@ -168,6 +215,16 @@ function draw(now) {
     ctx.fillText(label, w - tw + 2, headerHeight + 20 + th * 0.7);
   }
 
+  if (detectedLabel) {
+    ctx.font = `bold ${Math.max(20, Math.round(w * 0.024))}px sans-serif`;
+    const dw = ctx.measureText(detectedLabel).width + 24;
+    const dh = Math.round(h * 0.06);
+    ctx.fillStyle = "rgba(20,20,20,0.75)";
+    ctx.fillRect(14, headerHeight + 20, dw, dh);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(detectedLabel, 26, headerHeight + 20 + dh * 0.72);
+  }
+
   letters.forEach((letter, i) => {
     const y = y0 + i * (boxH + gap);
     ctx.fillStyle = COLORS[letter];
@@ -209,9 +266,6 @@ function draw(now) {
 function track(landmarker) {
   if (quizEnded) return;
   const now = performance.now();
-  let choice = null;
-  let confirmed = false;
-
   if (video.readyState >= 2) {
     if (currentQuestion && Date.now() - lastPreviewAt >= 1000) {
       previewContext.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
@@ -220,14 +274,25 @@ function track(landmarker) {
       });
       lastPreviewAt = Date.now();
     }
-    const result = landmarker.detectForVideo(video, now);
-    handsCount = result.landmarks.length;
-    for (const lm of result.landmarks) {
-      const states = fingersUp(lm);
-      choice = choiceFrom(states) || choice;
-      if (isThumbsUp(states, lm)) confirmed = true;
+    if (video.currentTime !== lastVideoTime) {
+      lastVideoTime = video.currentTime;
+      const result = landmarker.detectForVideo(video, now);
+      handsCount = result.landmarks.length;
+      const picks = new Set();
+      let thumbs = false;
+      for (const lm of result.landmarks) {
+        const states = fingersUp(lm);
+        const pick = choiceFrom(states);
+        if (pick) picks.add(pick);
+        if (isThumbsUp(states, lm)) thumbs = true;
+      }
+      // two hands showing different letters is ambiguous, so ignore both
+      lastChoice = smooth(choiceVotes, picks.size === 1 ? [...picks][0] : null);
+      lastConfirmed = smooth(confirmVotes, thumbs);
     }
   }
+  const choice = lastChoice;
+  const confirmed = lastConfirmed;
  // warn only after ~1s so it doesn't flicker
   if (handsCount >= 2 || !currentQuestion || lockedAnswer) {
     handsMissingSince = null;
@@ -242,6 +307,7 @@ function track(landmarker) {
   }
   if (currentQuestion && !lockedAnswer) {
     if (choice && confirmed) {
+      lastGoodAt = now;
       if (choice !== pointing) {
         pointing = choice;
         holdStart = now;
@@ -249,44 +315,79 @@ function track(landmarker) {
         lockedAnswer = choice;
         socket.emit("submit_answer", { choice, name: displayName });
       }
-    } else {
+    } else if (now - lastGoodAt > GRACE_MS) {
       pointing = null;
       holdStart = null;
     }
   }
+  detectedLabel = (!currentQuestion || lockedAnswer)
+    ? ""
+    : `Detected: ${choice ?? "–"} · thumbs-up ${confirmed ? "✓" : "✗"}`;
 
   draw(now);
   requestAnimationFrame(() => track(landmarker));
 }
 
 // ---------------------------------------------------------------- join flow
-document.getElementById("start-btn").addEventListener("click", async () => {
-  const input = document.getElementById("display-name");
-  const err = document.getElementById("join-error");
+const dialog = document.getElementById("camera-dialog");
+const joinStatus = document.getElementById("join-status");
+const joinError = document.getElementById("join-error");
+const joinButton = document.getElementById("start-btn");
+
+// Step 1: validate the form, then ask the person to confirm before touching the camera.
+joinButton.addEventListener("click", () => {
   const code = document.getElementById("join-code").value.trim();
-  displayName = input.value.trim();
+  displayName = document.getElementById("display-name").value.trim();
   if (!code || !displayName) {
-    err.style.display = "block";
-    err.textContent = "Enter the quiz code and your display name.";
+    joinError.style.display = "block";
+    joinError.textContent = "Enter the quiz code and your display name.";
     return;
   }
-    joinCode = code;
+  joinError.style.display = "none";
+  joinCode = code;
+  dialog.showModal();
+});
+document.getElementById("camera-cancel").addEventListener("click", () => dialog.close());
+document.getElementById("camera-confirm").addEventListener("click", () => {
+  dialog.close();
+  joinQuiz();
+});
 
+// Step 2: after confirmation, start the camera and join.
+async function joinQuiz() {
+  joinButton.disabled = true;
+  joinError.style.display = "none";
+  joinStatus.hidden = false;
+  joinStatus.textContent = "Waiting for camera permission…";
   try {
     await startCamera();
+    joinStatus.textContent = "Loading hand detection… this can take a few seconds.";
     const landmarker = await loadLandmarker();
-    socket.emit("join_quiz", { code, name: displayName });
+    socket.emit("join_quiz", { code: joinCode, name: displayName });
     document.getElementById("join-form").style.display = "none";
     document.getElementById("quiz-view").style.display = "block";
     await refreshQuestion();
     requestAnimationFrame(() => track(landmarker));
   } catch (e) {
-    err.style.display = "block";
-    err.textContent =
-      e.name === "NotAllowedError"
-        ? "Camera permission was denied. Allow camera access and try again."
-        : `Could not start: ${e.message}`;
+    video.srcObject?.getTracks().forEach((track) => track.stop());
+    joinError.style.display = "block";
+    joinError.textContent =
+      e.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in your browser and try again."
+      : e.name === "NotFoundError" ? "No camera was found on this device."
+      : e.name === "NotReadableError" ? "Your camera is in use by another app. Close it and try again."
+      : `Could not start: ${e.message}`;
+  } finally {
+    joinStatus.hidden = true;
+    joinButton.disabled = false;
   }
+}
+
+document.getElementById("leave-btn").addEventListener("click", () => {
+  if (!window.confirm("Leave this quiz?")) return;
+  quizEnded = true;
+  video.srcObject?.getTracks().forEach((track) => track.stop());
+  socket.disconnect();
+  window.location.assign("/");
 });
 
 refreshQuestion();

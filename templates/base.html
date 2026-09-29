@@ -15,12 +15,12 @@
       {% if session.get('user_id') %}
         <p class="profile-status logged-in">● Logged in</p>
         <p class="profile-email">{{ logged_in_email }}</p>
-        <a href="{{ url_for('dashboard') }}">Dashboard</a>
-        <a href="{{ url_for('logout') }}">Log out</a>
+        <a class="btn btn-secondary btn-small" href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a class="btn btn-danger btn-small" href="{{ url_for('logout') }}">Log out</a>
       {% else %}
         <p class="profile-status logged-out">● Not logged in</p>
-        <a href="{{ url_for('login') }}">Log in</a>
-        <a href="{{ url_for('signup') }}">Create account</a>
+        <a class="btn btn-small" href="{{ url_for('login') }}">Log in</a>
+        <a class="btn btn-secondary btn-small" href="{{ url_for('signup') }}">Create account</a>
       {% endif %}
     </aside>
     <main class="card">

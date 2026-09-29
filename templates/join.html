@@ -4,23 +4,104 @@
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
 {% endblock %}
 {% block content %}
+  {# One hand drawing: `fingers` raised (index first); `thumb` = thumbs-up fist. #}
+  {% macro hand(fingers, thumb, label) %}
+  <figure class="gesture{% if thumb %} confirm{% endif %}">
+    <svg viewBox="0 0 100 120" role="img" aria-label="{{ label }}">
+      {% set tops = [28, 16, 20, 34] %}
+      <g fill="#f3c9a5" stroke="#14121f" stroke-width="2.5" stroke-linejoin="round">
+        {% if thumb %}<rect x="14" y="8" width="20" height="62" rx="10"/>{% endif %}
+        {% for x in [22, 38, 54, 70] %}
+          {% if loop.index0 < fingers %}
+            <rect x="{{ x }}" y="{{ tops[loop.index0] }}" width="14" height="62" rx="7"/>
+          {% endif %}
+        {% endfor %}
+        <rect x="18" y="60" width="68" height="50" rx="14"/>
+        {% for x in [22, 38, 54, 70] %}
+          {% if loop.index0 >= fingers %}
+            <rect x="{{ x }}" y="54" width="14" height="24" rx="7"/>
+          {% endif %}
+        {% endfor %}
+        {% if not thumb %}<ellipse cx="46" cy="92" rx="17" ry="8"/>{% endif %}
+      </g>
+    </svg>
+    <figcaption>{{ label }}</figcaption>
+  </figure>
+  {% endmacro %}
+
+  {% macro guide() %}
+  <section class="how-it-works">
+    <h2>How answering works</h2>
+    <ol class="how-steps">
+      <li><strong>Choose</strong> your answer with one hand: hold up 1 to 4 fingers for A to D.</li>
+      <li><strong>Confirm</strong> with your other hand: make a thumbs-up (closed fist, thumb pointing up).</li>
+      <li><strong>Hold both signs steady for 1.2 seconds.</strong> A white bar fills the answer, then it locks in. You can't change it afterwards.</li>
+    </ol>
+    <div class="gesture-grid">
+      {{ hand(1, false, "1 finger = A") }}
+      {{ hand(2, false, "2 fingers = B") }}
+      {{ hand(3, false, "3 fingers = C") }}
+      {{ hand(4, false, "4 fingers = D") }}
+      {{ hand(0, true, "Thumbs-up = confirm") }}
+    </div>
+    <div class="gesture-combo">
+      {{ hand(2, false, "One hand: 2 fingers") }}
+      <span class="combo-sign">+</span>
+      {{ hand(0, true, "Other hand: thumbs-up") }}
+      <span class="combo-sign">=</span>
+      <span class="combo-result">B locked in</span>
+    </div>
+    <ul class="tips">
+      <li>Keep both hands in view of the camera, palms facing it, with good lighting.</li>
+      <li>Tuck your thumb in when showing fingers, and curl all fingers for the thumbs-up.</li>
+      <li>Questions with only two or three answers accept only those letters.</li>
+      <li>Each question allows one answer. The next question resets everything.</li>
+    </ul>
+  </section>
+  {% endmacro %}
+
   <h1>Join a quiz</h1>
 
   <div id="join-form">
     <label for="join-code">Quiz code</label>
     <input type="text" id="join-code" value="{{ request.args.get('code', '') }}" required>
-    <label>Display name (shown to the host)</label>
+    <label for="display-name">Display name (shown to the host)</label>
     <input type="text" id="display-name" maxlength="30" required>
-    <p class="muted-link">During a live quiz, a small, low-resolution camera preview is shared with the host for live supervision. Frames are not recorded or stored.</p>
-    <button type="button" id="start-btn">Enable camera &amp; join</button>
+    <p class="muted-link">Joining uses your camera to read your hand signs. You'll be asked to confirm before it turns on.</p>
+    <button type="button" id="start-btn">Join quiz</button>
+    <p class="status" id="join-status" hidden></p>
     <div class="error" id="join-error" style="display:none;"></div>
-    <p class="muted-link"><a href="{{ url_for('home') }}">Back</a></p>
+    <div class="btn-row">
+      <a class="btn btn-secondary btn-small" href="{{ url_for('home') }}">Back to home</a>
+    </div>
+    {{ guide() }}
   </div>
+
+  <dialog id="camera-dialog" class="confirm-dialog">
+    <h2>Turn on your camera?</h2>
+    <p>Your browser will ask for camera permission next. Here is what to expect:</p>
+    <ul>
+      <li>Hand detection runs on your device. Your video is not uploaded.</li>
+      <li>A small, low-resolution preview is sent to the host about once a second so they can supervise the quiz.</li>
+      <li>Previews are not recorded or stored.</li>
+    </ul>
+    <div class="btn-row">
+      <button type="button" id="camera-confirm">Yes, enable camera</button>
+      <button type="button" id="camera-cancel" class="btn-secondary">Cancel</button>
+    </div>
+  </dialog>
 
   <div id="quiz-view" style="display:none;">
     <h2 id="question" class="big-title">Waiting for the host…</h2>
     <canvas id="overlay"></canvas>
-    <div class="status" id="status">Show 1–4 fingers to pick A–D, thumbs-up on your other hand to confirm. Hold both for 1.2s.</div>
+    <div class="status" id="status">Pick an answer with 1–4 fingers on one hand, then give a thumbs-up with your other hand. Hold both for 1.2 seconds.</div>
+    <details class="how-to">
+      <summary>Show hand signals</summary>
+      {{ guide() }}
+    </details>
+    <div class="btn-row">
+      <button type="button" id="leave-btn" class="btn-danger">Leave quiz</button>
+    </div>
     <section id="score-result" class="question-builder" hidden></section>
   </div>
 {% endblock %}

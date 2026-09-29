@@ -4,7 +4,7 @@
   <h1>GestureLock</h1>
   <p class="muted-link">Choose how you want to use the quiz.</p>
   <div class="home-actions">
-    <a href="{{ url_for('dashboard') if session.get('user_id') else url_for('login') }}"><button type="button">Host a quiz</button></a>
-    <a href="{{ url_for('join_page') }}"><button type="button">Join a quiz</button></a>
+    <a class="btn" href="{{ url_for('dashboard') if session.get('user_id') else url_for('login') }}">Host a quiz</a>
+    <a class="btn" href="{{ url_for('join_page') }}">Join a quiz</a>
   </div>
 {% endblock %}

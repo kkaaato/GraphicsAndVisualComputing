@@ -31,12 +31,12 @@
   {% endif %}
   <nav class="page-actions">
     {% if participant %}
-      <a href="{{ url_for('join_page') }}">Join another quiz</a>
-      <a href="{{ url_for('home') }}">Home</a>
+      <a class="btn" href="{{ url_for('join_page') }}">Join another quiz</a>
+      <a class="btn btn-secondary" href="{{ url_for('home') }}">Back to home</a>
     {% else %}
-      <a href="{{ url_for('host_page', quiz_id=quiz.id) }}">Back to host</a>
-      <a href="{{ url_for('dashboard') }}">Dashboard</a>
-      <a href="{{ url_for('home') }}">Home</a>
+      <a class="btn btn-secondary" href="{{ url_for('host_page', quiz_id=quiz.id) }}">Back to host</a>
+      <a class="btn" href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a class="btn btn-secondary" href="{{ url_for('home') }}">Back to home</a>
     {% endif %}
   </nav>
 {% endblock %}

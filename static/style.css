@@ -290,3 +290,81 @@ form > button,
 .question-body { margin-top: 12px; }
 .participant-tile img[hidden],
 .camera-waiting[hidden] { display: none; }
+/* ================= buttons, guide, dialog (added) ================= */
+[hidden] { display: none !important; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 10px 22px;
+  border: none;
+  border-radius: 8px;
+  background: #8c6bff;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { background: #7a58f2; }
+.btn-secondary { background: #3a3555; color: #f2f0f7; }
+.btn-secondary:hover { background: #4a426b; }
+.btn-danger { background: #5a3040; color: #fff; }
+.btn-danger:hover { background: #74384d; }
+.btn-small { min-width: 0; min-height: 34px; padding: 6px 14px; font-size: 13px; margin-top: 0; }
+.btn:focus-visible, button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.btn-row button, .btn-row .btn { margin-top: 0; }
+.profile-drawer a.btn { margin-top: 10px; text-align: center; }
+#scoreboard-link { margin-top: 20px; }
+
+.quiz-list { margin-top: 20px; }
+.quiz-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.row-actions { display: flex; gap: 8px; margin-left: 12px; }
+
+.how-it-works {
+  margin-top: 28px;
+  padding: 18px;
+  border: 1px solid #3a3555;
+  border-radius: 10px;
+  background: #262138;
+}
+.how-it-works h2 { margin: 0 0 12px; font-size: 18px; }
+.how-steps { margin: 12px 0 16px; padding-left: 20px; font-size: 14px; line-height: 1.6; }
+.gesture-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 12px; }
+.gesture {
+  margin: 0;
+  padding: 10px 6px;
+  text-align: center;
+  border: 1px solid #3a3555;
+  border-radius: 10px;
+  background: #14121f;
+}
+.gesture.confirm { border-color: #4ade80; }
+.gesture svg { width: 72px; height: auto; }
+.gesture figcaption { margin-top: 6px; font-size: 12px; color: #a9a4c2; }
+.gesture-combo { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; }
+.gesture-combo .gesture { width: 130px; }
+.combo-sign { font-size: 24px; color: #a9a4c2; }
+.combo-result { font-weight: 700; color: #4ade80; }
+.tips { margin: 16px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: #a9a4c2; }
+.how-to { margin-top: 20px; }
+.how-to > summary { cursor: pointer; color: #8c6bff; font-weight: 600; }
+
+dialog.confirm-dialog {
+  width: calc(100% - 32px);
+  max-width: 460px;
+  padding: 24px;
+  border: 1px solid #3a3555;
+  border-radius: 16px;
+  background: #1e1b2e;
+  color: #f2f0f7;
+}
+dialog.confirm-dialog::backdrop { background: rgba(0, 0, 0, 0.65); }
+dialog.confirm-dialog h2 { margin: 0 0 12px; font-size: 20px; }
+dialog.confirm-dialog ul { padding-left: 20px; font-size: 14px; line-height: 1.6; color: #cfcae3; }
