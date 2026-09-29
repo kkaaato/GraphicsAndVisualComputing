@@ -69,6 +69,7 @@ document.getElementById("generate-link-btn").addEventListener("click", () => {
   document.getElementById("join-link").value = `${window.location.origin}/join?code=${encodeURIComponent(generatedCode)}`;
   document.getElementById("share-link-area").hidden = false;
   startButton.disabled = false;
+  socket.emit("prepare_quiz", { quiz_id: window.QUIZ_ID, code: generatedCode });
 });
 
 document.getElementById("copy-link-btn").addEventListener("click", async () => {
@@ -93,7 +94,7 @@ codeInput.addEventListener("input", () => {
 
 document.getElementById("start-btn").addEventListener("click", () => {
   if (!generatedCode) return;
-  socket.emit("load_quiz", { quiz_id: window.QUIZ_ID, code: generatedCode });
+  socket.emit("start_quiz", { quiz_id: window.QUIZ_ID });
   quizStarted = true;
   document.getElementById("start-btn").style.display = "none";
 });

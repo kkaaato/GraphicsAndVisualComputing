@@ -24,14 +24,16 @@ function addAnswer(answerList, questionId, answerText = "", isCorrect = false) {
   row.className = "answer-row";
   row.innerHTML = `
     <span class="answer-letter">${letter}</span>
-    <input type="text" class="answer-text" placeholder="Answer ${letter}" value="${answerText}">
+    <input type="text" class="answer-text" placeholder="Answer ${letter}">
     <label class="correct-option">
       <input type="radio" name="correct-${questionId}" value="${letter}"${isCorrect || (!answerText && answerNumber === 0) ? " checked" : ""}>
       Correct
     </label>
     <button type="button" class="remove-answer" title="Remove answer">Remove</button>
   `;
-  row.querySelector(".remove-answer").addEventListener("click", () => {
+  row.querySelector(".answer-text").value = answerText;
+  row.querySelector(".remove-answer").addEventListener("click", (event) => {
+    event.stopPropagation();
     if (answerList.children.length <= 2) return;
     const wasCorrect = row.querySelector("input[type=radio]").checked;
     row.remove();
@@ -41,44 +43,40 @@ function addAnswer(answerList, questionId, answerText = "", isCorrect = false) {
   answerList.appendChild(row);
 }
 
-function addQuestion(initial = null) {
+function addQuestion(initial = null, startCollapsed = false) {
   const questionId = nextQuestionId++;
   const questionNumber = questionList.children.length + 1;
-  const questionText = initial ? (initial.question || initial.question_text) : "";
+  const questionText = initial ? (initial.question || initial.question_text || "") : "";
   const choices = initial ? (initial.choices || {
     A: initial.choice_a,
     B: initial.choice_b,
     C: initial.choice_c,
     D: initial.choice_d,
   }) : null;
-  const card = document.createElement("details");
-  card.className = "question-builder";
-  card.open = initial ? questionNumber === 1 : true;
-  if (!initial) [...questionList.children].forEach((c) => { c.open = false; });
+
+  const card = document.createElement("section");
+  card.className = "question-builder" + (startCollapsed ? " collapsed" : "");
   card.innerHTML = `
-    <summary class="question-heading">
-      <span class="question-label">
-        <span class="question-title">Question ${questionNumber}</span>
-        <span class="question-preview"></span>
-      </span>
+    <div class="question-heading">
+      <h2><span class="chevron">&#9660;</span> Question ${questionNumber}</h2>
       <button type="button" class="remove-question">Remove question</button>
-    </summary>
+    </div>
     <div class="question-body">
-      <input type="text" class="question-text" placeholder="Type your question" value="${questionText}" required>
+      <label>Question text</label>
+      <input type="text" class="question-text" placeholder="Type your question" required>
       <label>Time limit (seconds)</label>
       <input type="number" class="time-limit" min="5" max="600" value="${initial ? initial.time_limit : 30}" required>
       <div class="answer-list"></div>
       <button type="button" class="add-answer">+ Add answer</button>
     </div>
   `;
-  const questionInput = card.querySelector(".question-text");
-  const preview = card.querySelector(".question-preview");
-  const syncPreview = () => {
-    const t = questionInput.value.trim();
-    preview.textContent = t ? `— ${t}` : "";
-  };
-  questionInput.addEventListener("input", syncPreview);
-  syncPreview();
+  card.querySelector(".question-text").value = questionText;
+
+  // clicking anywhere on the heading toggles collapse, except the remove button
+  card.querySelector(".question-heading").addEventListener("click", (event) => {
+    if (event.target.closest(".remove-question")) return;
+    card.classList.toggle("collapsed");
+  });
 
   const answerList = card.querySelector(".answer-list");
   if (initial) {
@@ -89,18 +87,27 @@ function addQuestion(initial = null) {
     addAnswer(answerList, questionId);
     addAnswer(answerList, questionId);
   }
-  card.querySelector(".add-answer").addEventListener("click", () => {
+  card.querySelector(".add-answer").addEventListener("click", (event) => {
+    event.stopPropagation();
     addAnswer(answerList, questionId);
   });
-    card.querySelector(".remove-question").addEventListener("click", (event) => {
-    event.preventDefault();   // stop the click from toggling the dropdown
+  card.querySelector(".remove-question").addEventListener("click", (event) => {
+    event.stopPropagation();
     if (questionList.children.length <= 1) return;
     card.remove();
     [...questionList.children].forEach((question, index) => {
-      question.querySelector(".question-title").textContent = `Question ${index + 1}`;
+      question.querySelector("h2").innerHTML = `<span class="chevron">&#9660;</span> Question ${index + 1}`;
     });
   });
   questionList.appendChild(card);
+}
+
+addQuestionButton.addEventListener("click", () => addQuestion());
+
+if (window.EDIT_QUIZ && window.EDIT_QUIZ.length) {
+  window.EDIT_QUIZ.forEach((question, index) => addQuestion(question, index !== 0));
+} else {
+  addQuestion();
 }
 
 function serializeQuestions() {
@@ -113,19 +120,12 @@ function serializeQuestions() {
     const texts = answers.map((row) => row.querySelector(".answer-text").value.trim());
 
     if (!question || !timeLimit || texts.length < 2 || texts.some((text) => !text) || !correct) {
+      card.classList.remove("collapsed");
       return null;
     }
     lines.push([question, ...texts, correct.value, timeLimit].join("|"));
   }
   return lines.join("\n");
-}
-
-addQuestionButton.addEventListener("click", () => addQuestion());
-const editData = JSON.parse(document.getElementById("edit-quiz-data").dataset.quiz);
-if (editData && editData.length) {
-  editData.forEach((q) => addQuestion(q));
-} else {
-  addQuestion();
 }
 
 form.addEventListener("submit", (event) => {
@@ -137,8 +137,3 @@ form.addEventListener("submit", (event) => {
   }
   questionsField.value = serialized;
 });
-// if a hidden required field fails validation, open its dropdown so the error is visible
-form.addEventListener("invalid", (e) => {
-  const d = e.target.closest("details");
-  if (d) d.open = true;
-}, true);

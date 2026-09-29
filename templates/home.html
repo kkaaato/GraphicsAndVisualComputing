@@ -1,10 +1,30 @@
 {% extends "base.html" %}
 {% block title %}GestureLock{% endblock %}
+{% block card_class %}home-card{% endblock %}
 {% block content %}
-  <h1>GestureLock</h1>
-  <p class="muted-link">Choose how you want to use the quiz.</p>
-  <div class="home-actions">
-    <a class="btn" href="{{ url_for('dashboard') if session.get('user_id') else url_for('login') }}">Host a quiz</a>
-    <a class="btn" href="{{ url_for('join_page') }}">Join a quiz</a>
+  <div class="hero">
+    <div class="hero-mark" aria-hidden="true">&#9995;</div>
+    <h1 class="hero-title">GestureLock</h1>
+    <p class="hero-sub">Multiple-choice quizzes answered with your hands. Pick 1&ndash;4 fingers, confirm with a thumbs-up.</p>
+  </div>
+
+  <p class="choose-label">Choose how you want to use the quiz</p>
+  <div class="choice-grid">
+    <a class="choice-card" href="{{ url_for('dashboard') }}">
+      <span class="choice-icon">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      </span>
+      <span class="choice-title">Host a quiz</span>
+      <span class="choice-desc">Create and edit quizzes, then run them live. Needs an account.</span>
+      <span class="choice-go">Get started &rarr;</span>
+    </a>
+    <a class="choice-card" href="{{ url_for('join_page') }}">
+      <span class="choice-icon">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>
+      </span>
+      <span class="choice-title">Join a quiz</span>
+      <span class="choice-desc">Enter a code and answer with hand gestures. No account needed.</span>
+      <span class="choice-go">Enter a code &rarr;</span>
+    </a>
   </div>
 {% endblock %}

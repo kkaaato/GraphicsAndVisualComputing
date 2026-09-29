@@ -1,10 +1,8 @@
 const socket = io();
 
-const COLORS = { A: "#ff6b57", B: "#2fb86e", C: "#ffc34b", D: "#8c6bff" };
-const HOLD_MS = 1200;
-const GRACE_MS = 350;      // a brief detection dropout won't reset the hold timer
-const SMOOTH_FRAMES = 5;   // majority vote over the last N frames to remove flicker
-const HOWTO_TEXT = "Pick an answer with 1–4 fingers on one hand, then give a thumbs-up with your other hand. Hold both for 1.2 seconds.";
+const COLORS = { A: "#ff6b57", B: "#6fcf4a", C: "#ffd23f", D: "#5fb0f0" };
+const HOLD_MS = 600;
+const NO_HAND_WARNING_MS = 900; // how long with no hand before we show the toast
 const MP_VERSION = "0.10.14";
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 
@@ -15,22 +13,7 @@ let pointing = null;
 let holdStart = null;
 let quizEnded = false;
 let lastPreviewAt = 0;
-let timeLimit = 30;
-let questionEndsAt = null;   // ms timestamp when the current question ends
-let handsCount = 0;
-let handsMissingSince = null;
-let handWarning = "";
-let lastVideoTime = -1;
-let lastGoodAt = 0;
-let lastChoice = null;
-let lastConfirmed = false;
-let detectedLabel = "";
-const choiceVotes = [];
-const confirmVotes = [];
-
-function getTimeLeft() {
-  return questionEndsAt ? Math.max(0, (questionEndsAt - Date.now()) / 1000) : null;
-}
+let lastHandSeenAt = performance.now();
 const previewCanvas = document.createElement("canvas");
 previewCanvas.width = 320;
 previewCanvas.height = 180;
@@ -46,6 +29,7 @@ video.playsInline = true;
 const canvas = document.getElementById("overlay");
 const ctx = canvas.getContext("2d");
 const statusEl = document.getElementById("status");
+const DEFAULT_HINT = statusEl.textContent;
 
 // ---------------------------------------------------------------- question state
 async function refreshQuestion() {
@@ -53,18 +37,14 @@ async function refreshQuestion() {
   const r = await fetch(`/api/question${query}`);
   if (r.status === 204) return;
   currentQuestion = await r.json();
-    timeLimit = currentQuestion.time_limit || 30;
-  const clockOffset = currentQuestion.server_time ? currentQuestion.server_time * 1000 - Date.now() : 0;
-  const startedMs = currentQuestion.started_at ? currentQuestion.started_at * 1000 : Date.now() + clockOffset;
-  questionEndsAt = startedMs + timeLimit * 1000 - clockOffset;
   if (displayName) {
     socket.emit("join_quiz", { code: joinCode, name: displayName });
   }
   lockedAnswer = null;
   pointing = null;
   holdStart = null;
-  statusEl.textContent = HOWTO_TEXT;
   statusEl.className = "status";
+  statusEl.textContent = DEFAULT_HINT;
   document.getElementById("question").textContent = currentQuestion.question;
 }
 
@@ -75,10 +55,10 @@ socket.on("answer_result", (result) => {
     statusEl.textContent = result.correct
       ? `Correct! The answer is ${result.correct_answer}. ${result.correct_text}`
       : `Answer received. The correct answer is ${result.correct_answer}. ${result.correct_text}`;
-    statusEl.className = result.correct ? "status correct" : "status wrong";
+    statusEl.className = result.correct ? "status result-banner correct" : "status result-banner wrong";
   } else {
-    statusEl.textContent = "Answer received.";
-    statusEl.className = "status";
+    statusEl.textContent = `\u2713 Answer locked in: ${result.selected_answer}`;
+    statusEl.className = "status result-banner locked";
   }
 });
 socket.on("quiz_ended", ({ scoreboard_url }) => {
@@ -88,22 +68,12 @@ socket.on("quiz_ended", ({ scoreboard_url }) => {
 });
 
 // ---------------------------------------------------------------- gesture logic
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-
-// Compares landmark distances (not raw y values), so it works when the hand is
-// tilted, rotated, or at a different distance from the camera.
 function fingersUp(lm) {
   const wrist = lm[0];
-  const palm = dist(lm[0], lm[9]) || 0.1;
-  // thumb is "out" when its tip is clearly farther from the pinky base than its knuckle is
-  const thumbOut =
-    dist(lm[4], lm[17]) > dist(lm[2], lm[17]) * 1.15 && dist(lm[4], lm[5]) > palm * 0.45;
-  const states = [thumbOut];
-  for (const [tip, pip, mcp] of [[8, 6, 5], [12, 10, 9], [16, 14, 13], [20, 18, 17]]) {
-    states.push(
-      dist(lm[tip], wrist) > dist(lm[pip], wrist) * 1.12 &&
-      dist(lm[tip], lm[mcp]) > palm * 0.55
-    );
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const states = [dist(lm[4], wrist) > dist(lm[3], wrist) + 0.02];
+  for (const [tip, pip] of [[8, 6], [12, 10], [16, 14], [20, 18]]) {
+    states.push(lm[tip].y < lm[pip].y - 0.02);
   }
   return states;
 }
@@ -115,32 +85,13 @@ function choiceFrom(states) {
 }
 
 function isThumbsUp(states, lm) {
-  if (!states[0] || states.slice(1).some(Boolean)) return false;
-  const palm = dist(lm[0], lm[9]) || 0.1;
-  const rise = lm[2].y - lm[4].y;          // > 0 when the thumb tip is above its base
-  const sideways = Math.abs(lm[4].x - lm[2].x);
-  return rise > palm * 0.4 && rise > sideways * 0.8;
-}
-
-// Most common value in the last few frames (latest wins ties).
-function smooth(buffer, value) {
-  buffer.push(value);
-  if (buffer.length > SMOOTH_FRAMES) buffer.shift();
-  const counts = new Map();
-  let best = value;
-  let bestCount = 0;
-  for (const v of buffer) {
-    const c = (counts.get(v) || 0) + 1;
-    counts.set(v, c);
-    if (c >= bestCount) { best = v; bestCount = c; }
-  }
-  return best;
+  return states[0] && !states.slice(1).some(Boolean) && lm[4].y < lm[3].y - 0.02;
 }
 
 // ---------------------------------------------------------------- camera loop
 async function startCamera() {
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { width: 1280, height: 720, facingMode: "user" },
+    video: { width: 1280, height: 720 },
     audio: false,
   });
   video.srcObject = stream;
@@ -156,23 +107,127 @@ async function loadLandmarker() {
   const fileset = await vision.FilesetResolver.forVisionTasks(
     `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`
   );
-  const options = (delegate) => ({
-    baseOptions: { modelAssetPath: MODEL_URL, delegate },
+  return vision.HandLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
     runningMode: "VIDEO",
     numHands: 2,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    minHandDetectionConfidence: 0.7,
+    minHandPresenceConfidence: 0.7,
+    minTrackingConfidence: 0.7,
   });
-  try {
-    return await vision.HandLandmarker.createFromOptions(fileset, options("GPU"));
-  } catch {
-    // some devices/browsers have no usable GPU delegate
-    return vision.HandLandmarker.createFromOptions(fileset, options("CPU"));
-  }
 }
 
-function draw(now) {
+function wrapLines(text, maxWidth) {
+  const words = text.split(" ");
+  const lines = [];
+  let line = "";
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawTimerChip(w, remainingSeconds, color) {
+  const label = remainingSeconds == null ? "" : `0:${String(Math.max(0, remainingSeconds)).padStart(2, "0")}`;
+  if (!label) return;
+  const chipW = Math.round(w * 0.11);
+  const chipH = Math.round(w * 0.034);
+  const x = w - chipW - 14;
+  const y = 12;
+  ctx.fillStyle = "rgba(20,34,75,0.88)";
+  ctx.beginPath();
+  ctx.roundRect(x, y, chipW, chipH, chipH / 2);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x + chipH * 0.55, y + chipH / 2, chipH * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.font = `${Math.round(chipH * 0.5)}px sans-serif`;
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + chipH * 0.95, y + chipH / 2 + 1);
+  ctx.textBaseline = "alphabetic";
+}
+
+function drawHoldRing(w, h, progress, letter) {
+  const r = Math.round(w * 0.032);
+  const cx = w / 2;
+  const cy = h - r - 16;
+  ctx.lineWidth = Math.max(3, Math.round(r * 0.22));
+  ctx.strokeStyle = "rgba(212,240,74,0.3)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = "#d4f04a";
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
+  ctx.stroke();
+  ctx.lineCap = "butt";
+  ctx.fillStyle = "#d4f04a";
+  ctx.font = `700 ${Math.round(r * 0.9)}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(letter, cx, cy + 1);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
+function drawNoHandToast(w, h) {
+  const label = "Show both hands clearly";
+  ctx.font = `${Math.max(16, Math.round(w * 0.022))}px sans-serif`;
+  const textW = ctx.measureText(label).width;
+  const padX = 16;
+  const boxW = textW + padX * 2 + 24;
+  const boxH = Math.round(w * 0.045);
+  const x = w / 2 - boxW / 2;
+  const y = h - boxH - 16;
+  ctx.fillStyle = "rgba(255,228,224,0.96)";
+  ctx.beginPath();
+  ctx.roundRect(x, y, boxW, boxH, boxH / 2);
+  ctx.fill();
+  ctx.strokeStyle = "#d8322a";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x, y, boxW, boxH, boxH / 2);
+  ctx.stroke();
+  ctx.fillStyle = "#d8322a";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + boxW / 2 - textW / 2, y + boxH / 2 + 1);
+  ctx.textBaseline = "alphabetic";
+}
+
+function drawLockedBanner(w, h, letter) {
+  const label = `\u2713  ANSWER LOCKED IN: ${letter}`;
+  const fontSize = Math.max(28, Math.round(w * 0.04));
+  ctx.font = `800 ${fontSize}px sans-serif`;
+  const textW = ctx.measureText(label).width;
+  const boxW = textW + fontSize * 1.6;
+  const boxH = Math.round(fontSize * 1.9);
+  const x = w / 2 - boxW / 2;
+  const y = h * 0.4 - boxH / 2;
+  ctx.fillStyle = "rgba(212,240,74,0.97)";
+  ctx.beginPath();
+  ctx.roundRect(x, y, boxW, boxH, boxH / 2);
+  ctx.fill();
+  ctx.strokeStyle = "#14224b";
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  ctx.fillStyle = "#14224b";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, w / 2, h * 0.4 + 2);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+}
+
+function draw(now, remainingSeconds, noHand) {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
@@ -190,82 +245,56 @@ function draw(now) {
   const gap = 10;
   const y0 = h - (boxH + gap) * letters.length - gap;
 
-  ctx.fillStyle = "rgba(20,20,20,0.85)";
-  const headerHeight = Math.round(h * 0.12);
+  const fontSize = Math.max(26, Math.round(w * 0.034));
+  ctx.font = `${fontSize}px sans-serif`;
+  const lines = wrapLines(currentQuestion.question, w * 0.78);
+  const lineH = Math.round(fontSize * 1.25);
+  const headerHeight = lines.length * lineH + Math.round(h * 0.025);
+
+  ctx.fillStyle = "rgba(20,34,75,0.85)";
   ctx.fillRect(0, 0, w, headerHeight);
   ctx.fillStyle = "#ffffff";
-  ctx.font = `${Math.max(28, Math.round(w * 0.038))}px sans-serif`;
-  ctx.fillText(currentQuestion.question.slice(0, 72), Math.round(w * 0.02), Math.round(headerHeight * 0.68));
-   // countdown: progress bar under the header + number badge
-  const left = getTimeLeft();
-  if (left !== null) {
-    const frac = Math.min(left / timeLimit, 1);
-    const urgent = left <= 5;
-    ctx.fillStyle = "rgba(255,255,255,0.2)";
-    ctx.fillRect(0, headerHeight, w, 10);
-    ctx.fillStyle = urgent ? "#f87171" : frac < 0.5 ? "#fbbf24" : "#4ade80";
-    ctx.fillRect(0, headerHeight, w * frac, 10);
-    const label = left > 0 ? `${Math.ceil(left)}s` : "Time's up";
-    ctx.font = `bold ${Math.max(28, Math.round(w * 0.04))}px sans-serif`;
-    const tw = ctx.measureText(label).width + 32;
-    const th = Math.round(h * 0.09);
-    ctx.fillStyle = urgent ? "#dc2626" : "rgba(20,20,20,0.85)";
-    ctx.fillRect(w - tw - 14, headerHeight + 20, tw, th);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(label, w - tw + 2, headerHeight + 20 + th * 0.7);
-  }
+  lines.forEach((text, i) => {
+    ctx.fillText(text, Math.round(w * 0.02), lineH * (i + 1) - Math.round(lineH * 0.28));
+  });
 
-  if (detectedLabel) {
-    ctx.font = `bold ${Math.max(20, Math.round(w * 0.024))}px sans-serif`;
-    const dw = ctx.measureText(detectedLabel).width + 24;
-    const dh = Math.round(h * 0.06);
-    ctx.fillStyle = "rgba(20,20,20,0.75)";
-    ctx.fillRect(14, headerHeight + 20, dw, dh);
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(detectedLabel, 26, headerHeight + 20 + dh * 0.72);
-  }
+  const timerColor = remainingSeconds != null && remainingSeconds <= 5 ? "#d8322a" : "#d4f04a";
+  drawTimerChip(w, remainingSeconds, timerColor);
 
   letters.forEach((letter, i) => {
     const y = y0 + i * (boxH + gap);
+    ctx.globalAlpha = lockedAnswer && lockedAnswer !== letter ? 0.35 : 1;
     ctx.fillStyle = COLORS[letter];
     ctx.fillRect(14, y, w - 28, boxH);
 
     if (lockedAnswer === letter) {
       ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 5;
-      ctx.strokeRect(14, y, w - 28, boxH);
-    } else if (pointing === letter && holdStart) {
-      const progress = Math.min((now - holdStart) / HOLD_MS, 1);
-      ctx.fillStyle = "rgba(255,255,255,0.75)";
-      ctx.fillRect(14, y, (w - 28) * progress, boxH);
+      ctx.lineWidth = 8;
+      ctx.strokeRect(18, y + 4, w - 36, boxH - 8);
     }
 
-    ctx.fillStyle = "#141414";
+    ctx.fillStyle = "#14224b";
     ctx.font = `${Math.max(24, Math.round(w * 0.032))}px sans-serif`;
     ctx.fillText(`${letter}. ${currentQuestion.choices[letter]}`.slice(0, 58), Math.round(w * 0.025), y + boxH / 2 + Math.round(w * 0.01));
+    ctx.globalAlpha = 1;
   });
 
   if (lockedAnswer) {
-    ctx.fillStyle = "#2fb86e";
-    ctx.font = `${Math.max(24, Math.round(w * 0.032))}px sans-serif`;
-    ctx.fillText(`Locked in: ${lockedAnswer}`, Math.round(w * 0.02), h - Math.round(h * 0.01));
-  }
-  if (handWarning) {
-    const bh = Math.round(h * 0.11);
-    const by = Math.round(h * 0.42);
-    ctx.fillStyle = "rgba(220, 38, 38, 0.88)";
-    ctx.fillRect(0, by, w, bh);
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `bold ${Math.max(22, Math.round(w * 0.026))}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.fillText(`⚠ ${handWarning}`, w / 2, by + bh * 0.62);
-    ctx.textAlign = "left";
+    drawLockedBanner(w, h, lockedAnswer);
+  } else if (pointing && holdStart) {
+    drawHoldRing(w, h, Math.min((now - holdStart) / HOLD_MS, 1), pointing);
+  } else if (noHand) {
+    drawNoHandToast(w, h);
   }
 }
 
 function track(landmarker) {
   if (quizEnded) return;
   const now = performance.now();
+  let choice = null;
+  let confirmed = false;
+  let sawAnyHand = false;
+
   if (video.readyState >= 2) {
     if (currentQuestion && Date.now() - lastPreviewAt >= 1000) {
       previewContext.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
@@ -274,40 +303,20 @@ function track(landmarker) {
       });
       lastPreviewAt = Date.now();
     }
-    if (video.currentTime !== lastVideoTime) {
-      lastVideoTime = video.currentTime;
-      const result = landmarker.detectForVideo(video, now);
-      handsCount = result.landmarks.length;
-      const picks = new Set();
-      let thumbs = false;
-      for (const lm of result.landmarks) {
-        const states = fingersUp(lm);
-        const pick = choiceFrom(states);
-        if (pick) picks.add(pick);
-        if (isThumbsUp(states, lm)) thumbs = true;
-      }
-      // two hands showing different letters is ambiguous, so ignore both
-      lastChoice = smooth(choiceVotes, picks.size === 1 ? [...picks][0] : null);
-      lastConfirmed = smooth(confirmVotes, thumbs);
+    const result = landmarker.detectForVideo(video, now);
+    sawAnyHand = result.landmarks.length > 0;
+    for (const lm of result.landmarks) {
+      const states = fingersUp(lm);
+      choice = choiceFrom(states) || choice;
+      if (isThumbsUp(states, lm)) confirmed = true;
     }
   }
-  const choice = lastChoice;
-  const confirmed = lastConfirmed;
- // warn only after ~1s so it doesn't flicker
-  if (handsCount >= 2 || !currentQuestion || lockedAnswer) {
-    handsMissingSince = null;
-    handWarning = "";
-  } else {
-    handsMissingSince = handsMissingSince ?? now;
-    if (now - handsMissingSince > 1000) {
-      handWarning = handsCount === 0
-        ? "No hands detected — show your hands to the camera"
-        : "Only one hand visible — show both hands";
-    }
-  }
+
+  if (sawAnyHand) lastHandSeenAt = now;
+  const noHand = !lockedAnswer && currentQuestion && (now - lastHandSeenAt) > NO_HAND_WARNING_MS;
+
   if (currentQuestion && !lockedAnswer) {
     if (choice && confirmed) {
-      lastGoodAt = now;
       if (choice !== pointing) {
         pointing = choice;
         holdStart = now;
@@ -315,79 +324,67 @@ function track(landmarker) {
         lockedAnswer = choice;
         socket.emit("submit_answer", { choice, name: displayName });
       }
-    } else if (now - lastGoodAt > GRACE_MS) {
+    } else {
       pointing = null;
       holdStart = null;
     }
   }
-  detectedLabel = (!currentQuestion || lockedAnswer)
-    ? ""
-    : `Detected: ${choice ?? "–"} · thumbs-up ${confirmed ? "✓" : "✗"}`;
 
-  draw(now);
+  let remainingSeconds = null;
+  if (currentQuestion?.started_at && currentQuestion?.time_limit) {
+    remainingSeconds = Math.max(0, Math.ceil(
+      currentQuestion.time_limit - (Date.now() / 1000 - currentQuestion.started_at)
+    ));
+  }
+
+  draw(now, remainingSeconds, noHand);
   requestAnimationFrame(() => track(landmarker));
 }
 
 // ---------------------------------------------------------------- join flow
-const dialog = document.getElementById("camera-dialog");
-const joinStatus = document.getElementById("join-status");
-const joinError = document.getElementById("join-error");
-const joinButton = document.getElementById("start-btn");
+function showCameraToast(message, isError) {
+  const toast = document.getElementById("camera-toast");
+  toast.textContent = message;
+  toast.className = `camera-toast show ${isError ? "error" : "success"}`;
+}
 
-// Step 1: validate the form, then ask the person to confirm before touching the camera.
-joinButton.addEventListener("click", () => {
+document.getElementById("start-btn").addEventListener("click", async () => {
+  const input = document.getElementById("display-name");
+  const err = document.getElementById("join-error");
   const code = document.getElementById("join-code").value.trim();
-  displayName = document.getElementById("display-name").value.trim();
+  displayName = input.value.trim();
   if (!code || !displayName) {
-    joinError.style.display = "block";
-    joinError.textContent = "Enter the quiz code and your display name.";
+    err.style.display = "block";
+    err.textContent = "Enter the quiz code and your display name.";
     return;
   }
-  joinError.style.display = "none";
   joinCode = code;
-  dialog.showModal();
-});
-document.getElementById("camera-cancel").addEventListener("click", () => dialog.close());
-document.getElementById("camera-confirm").addEventListener("click", () => {
-  dialog.close();
-  joinQuiz();
-});
 
-// Step 2: after confirmation, start the camera and join.
-async function joinQuiz() {
-  joinButton.disabled = true;
-  joinError.style.display = "none";
-  joinStatus.hidden = false;
-  joinStatus.textContent = "Waiting for camera permission…";
+  const startBtn = document.getElementById("start-btn");
+  startBtn.disabled = true;
+  startBtn.textContent = "Requesting camera…";
+
   try {
     await startCamera();
-    joinStatus.textContent = "Loading hand detection… this can take a few seconds.";
+    showCameraToast("Camera enabled — you're ready to answer.", false);
+    socket.emit("join_quiz", { code, name: displayName });
     const landmarker = await loadLandmarker();
-    socket.emit("join_quiz", { code: joinCode, name: displayName });
     document.getElementById("join-form").style.display = "none";
     document.getElementById("quiz-view").style.display = "block";
+    document.querySelector("main.card").classList.add("quiz-active");
+    lastHandSeenAt = performance.now();
     await refreshQuestion();
     requestAnimationFrame(() => track(landmarker));
   } catch (e) {
-    video.srcObject?.getTracks().forEach((track) => track.stop());
-    joinError.style.display = "block";
-    joinError.textContent =
-      e.name === "NotAllowedError" ? "Camera permission was denied. Allow camera access in your browser and try again."
-      : e.name === "NotFoundError" ? "No camera was found on this device."
-      : e.name === "NotReadableError" ? "Your camera is in use by another app. Close it and try again."
-      : `Could not start: ${e.message}`;
-  } finally {
-    joinStatus.hidden = true;
-    joinButton.disabled = false;
+    startBtn.disabled = false;
+    startBtn.textContent = "Enable camera & join";
+    err.style.display = "block";
+    err.textContent =
+      e.name === "NotAllowedError"
+        ? "Camera permission was denied. Allow camera access and try again."
+        : `Could not start: ${e.message}`;
+    showCameraToast("Camera could not be enabled.", true);
   }
-}
-
-document.getElementById("leave-btn").addEventListener("click", () => {
-  if (!window.confirm("Leave this quiz?")) return;
-  quizEnded = true;
-  video.srcObject?.getTracks().forEach((track) => track.stop());
-  socket.disconnect();
-  window.location.assign("/");
 });
 
 refreshQuestion();
