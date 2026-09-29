@@ -10,6 +10,8 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 import database
 
+PREVIEW_INTERVAL_S = 0.2
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-only-insecure-key")
 socketio = SocketIO(
@@ -37,6 +39,7 @@ live = {
     "locked_answer": None,
     "locked_name": None,
     "question_started_at": None,
+    "started": False,
     "join_code": None,
     "host_sid": None,
     "participants": {},
@@ -287,7 +290,8 @@ def api_login_check():
 @app.route("/api/question")
 def api_question():
     code = request.args.get("code", "").strip()
-    if not live["quiz"] or live["ended"] or not code or code != live["join_code"]:
+    if (not live["quiz"] or not live["started"] or live["ended"]
+            or not code or code.upper() != live["join_code"]):
         return "", 204
     q = current_question()
     return jsonify(q) if q else ("", 204)
@@ -338,6 +342,16 @@ def on_join_quiz(data):
     socketio.emit("join_confirmed", {}, to=request.sid)
 
 
+@socketio.on("participant_ready")
+def on_participant_ready():
+    sid = request.sid
+    if not live["quiz"] or live["ended"] or sid not in live["participants"]:
+        return
+    live["participants"][sid]["ready"] = True
+    if live["host_sid"]:
+        socketio.emit("participant_ready", {"sid": sid}, to=live["host_sid"])
+
+
 @socketio.on("participant_camera")
 def on_participant_camera(data):
     sid = request.sid
@@ -346,7 +360,7 @@ def on_participant_camera(data):
         return
     participant = live["participants"][sid]
     now = time.monotonic()
-    if now - participant["last_frame_at"] < 0.8:
+    if now - participant["last_frame_at"] < PREVIEW_INTERVAL_S:
         return
     frame = str(data.get("frame", ""))
     if not frame.startswith("data:image/jpeg;base64,") or len(frame) > 120_000:
@@ -363,7 +377,8 @@ def on_participant_camera(data):
 def on_submit_answer(data):
     """Record one answer per participant for the active question."""
     sid = request.sid
-    if live["quiz"] is None or live["ended"] or sid not in live["participants"]:
+    if (live["quiz"] is None or not live["started"] or live["ended"]
+            or sid not in live["participants"]):
         return
     choice = str(data.get("choice", "")).upper()
     item = live["quiz"]["questions"][live["index"]]
@@ -386,7 +401,7 @@ def on_submit_answer(data):
 @socketio.on("next_question")
 def on_next_question():
     """Host advances after timeout, or closes the quiz after the final timeout."""
-    if live["quiz"] is None or live["ended"]:
+    if live["quiz"] is None or not live["started"] or live["ended"]:
         return
     item = live["quiz"]["questions"][live["index"]]
     if time.time() - live["question_started_at"] < item["time_limit"]:
@@ -417,9 +432,9 @@ def on_next_question():
     emit("question_update", host_payload(), broadcast=True)
 
 
-@socketio.on("load_quiz")
-def on_load_quiz(data):
-    """Host starts a quiz with a code participants can use to join."""
+@socketio.on("prepare_quiz")
+def on_prepare_quiz(data):
+    """Prepare a live quiz so participants can join before it starts."""
     quiz = database.get_quiz(int(data.get("quiz_id", 0)))
     if not quiz or not quiz["questions"]:
         return
@@ -429,7 +444,7 @@ def on_load_quiz(data):
     live.update(
         quiz_id=quiz["id"], quiz=quiz, index=0,
         locked_answer=None, locked_name=None,
-        question_started_at=time.time(),
+        question_started_at=None, started=False,
         join_code=code,
         host_sid=request.sid,
         participants={},
@@ -437,6 +452,16 @@ def on_load_quiz(data):
         ended=False,
     )
     reset_joiners()
+
+
+@socketio.on("start_quiz")
+def on_start_quiz(data):
+    if (live["quiz"] is None or live["ended"] or live["started"]
+            or request.sid != live["host_sid"]
+            or int(data.get("quiz_id", 0)) != live["quiz_id"]):
+        return
+    live["started"] = True
+    live["question_started_at"] = time.time()
     emit("question_update", host_payload(), broadcast=True)
 
 

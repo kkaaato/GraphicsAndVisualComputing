@@ -22,6 +22,6 @@
   <div class="btn-row"><a class="btn btn-secondary btn-small" href="{{ url_for('dashboard') }}">Back to dashboard</a></div>
 {% endblock %}
 {% block scripts %}
-  <div id="edit-quiz-data" data-quiz='{{ (quiz.questions if quiz else None) | tojson }}' hidden></div>
+  <div id="edit-quiz-data" data-quiz='{{ (quiz.questions if quiz else []) | tojson }}' hidden></div>
   <script src="{{ url_for('static', filename='new_quiz.js') }}"></script>
 {% endblock %}

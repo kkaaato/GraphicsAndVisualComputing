@@ -36,7 +36,7 @@
       </div>
       <div class="gesture-confirm">
         <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#14224b" stroke-width="1.6" style="flex-shrink:0"><path d="M7 22V11m0 0 4-8a1.7 1.7 0 0 1 3 1.5L12.5 9H18a2 2 0 0 1 2 2.4l-1.4 7A2 2 0 0 1 16.6 20H10a3 3 0 0 1-3-3"/></svg>
-        <span class="label">Thumbs-up on your <strong>other</strong> hand confirms the choice. Hold both steady for about half a second to lock it in.</span>
+        <span class="label">Keep both hands fully in view and move back if the camera reminder appears. Keep your answering thumb tucked; a thumbs-up on your <strong>other</strong> hand confirms. Hold both steady for 0.8 seconds.</span>
       </div>
     </div>
 
@@ -50,7 +50,8 @@
   <div id="quiz-view" style="display:none;">
     <h2 id="question" class="big-title">Waiting for the host…</h2>
     <canvas id="overlay"></canvas>
-    <div class="status" id="status">Show 1–4 fingers to pick A–D, thumbs-up on your other hand to confirm. Hold both for about half a second.</div>
+    <div class="status" id="status">Keep both hands in view and move back if prompted. Keep your answering thumb tucked; raise 1–4 fingers to pick A–D and thumbs-up with your other hand to confirm. Hold for 0.8 seconds.</div>
+    <button type="button" id="ready-btn" class="secondary btn-sm" style="width:auto;margin:12px auto;" hidden>I'm ready</button>
     <section id="score-result" class="question-builder" hidden></section>
   </div>
 {% endblock %}

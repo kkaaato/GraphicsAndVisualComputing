@@ -1,8 +1,10 @@
 const socket = io();
 
 const COLORS = { A: "#ff6b57", B: "#6fcf4a", C: "#ffd23f", D: "#5fb0f0" };
-const HOLD_MS = 600;
+const HOLD_MS = 800;
 const NO_HAND_WARNING_MS = 900; // how long with no hand before we show the toast
+const PREVIEW_INTERVAL_MS = 200;
+const HAND_TOO_CLOSE_RATIO = 0.55;
 const MP_VERSION = "0.10.14";
 const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 
@@ -40,6 +42,7 @@ async function refreshQuestion() {
   if (displayName) {
     socket.emit("join_quiz", { code: joinCode, name: displayName });
   }
+  document.getElementById("ready-btn").hidden = true;
   lockedAnswer = null;
   pointing = null;
   holdStart = null;
@@ -49,6 +52,12 @@ async function refreshQuestion() {
 }
 
 socket.on("question_update", refreshQuestion);
+socket.on("join_confirmed", () => {
+  if (!currentQuestion) {
+    document.getElementById("ready-btn").hidden = false;
+    statusEl.textContent = "You're in. Let the host know when you're ready.";
+  }
+});
 socket.on("answer_result", (result) => {
   lockedAnswer = result.selected_answer;
   if (Object.hasOwn(result, "correct_answer")) {
@@ -79,6 +88,7 @@ function fingersUp(lm) {
 }
 
 function choiceFrom(states) {
+  if (states[0]) return null;
   const count = states.slice(1).filter(Boolean).length;
   const choice = { 1: "A", 2: "B", 3: "C", 4: "D" }[count];
   return choice && currentQuestion?.choices[choice] ? choice : null;
@@ -86,6 +96,13 @@ function choiceFrom(states) {
 
 function isThumbsUp(states, lm) {
   return states[0] && !states.slice(1).some(Boolean) && lm[4].y < lm[3].y - 0.02;
+}
+
+function isHandTooClose(lm) {
+  const xs = lm.map((point) => point.x);
+  const ys = lm.map((point) => point.y);
+  return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+    > HAND_TOO_CLOSE_RATIO;
 }
 
 // ---------------------------------------------------------------- camera loop
@@ -107,31 +124,19 @@ async function loadLandmarker() {
   const fileset = await vision.FilesetResolver.forVisionTasks(
     `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VERSION}/wasm`
   );
-  return vision.HandLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
+  const createOptions = (delegate) => ({
+    baseOptions: { modelAssetPath: MODEL_URL, delegate },
     runningMode: "VIDEO",
     numHands: 2,
     minHandDetectionConfidence: 0.7,
     minHandPresenceConfidence: 0.7,
     minTrackingConfidence: 0.7,
   });
-}
-
-function wrapLines(text, maxWidth) {
-  const words = text.split(" ");
-  const lines = [];
-  let line = "";
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxWidth && line) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = test;
-    }
+  try {
+    return await vision.HandLandmarker.createFromOptions(fileset, createOptions("GPU"));
+  } catch {
+    return vision.HandLandmarker.createFromOptions(fileset, createOptions("CPU"));
   }
-  if (line) lines.push(line);
-  return lines;
 }
 
 function drawTimerChip(w, remainingSeconds, color) {
@@ -170,17 +175,19 @@ function drawHoldRing(w, h, progress, letter) {
   ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + progress * Math.PI * 2);
   ctx.stroke();
   ctx.lineCap = "butt";
-  ctx.fillStyle = "#d4f04a";
   ctx.font = `700 ${Math.round(r * 0.9)}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.strokeStyle = "#14224b";
+  ctx.lineWidth = Math.max(2, Math.round(r * 0.12));
+  ctx.strokeText(letter, cx, cy + 1);
+  ctx.fillStyle = "#ffffff";
   ctx.fillText(letter, cx, cy + 1);
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
 }
 
-function drawNoHandToast(w, h) {
-  const label = "Show both hands clearly";
+function drawCameraToast(w, h, label) {
   ctx.font = `${Math.max(16, Math.round(w * 0.022))}px sans-serif`;
   const textW = ctx.measureText(label).width;
   const padX = 16;
@@ -227,7 +234,7 @@ function drawLockedBanner(w, h, letter) {
   ctx.textBaseline = "alphabetic";
 }
 
-function draw(now, remainingSeconds, noHand) {
+function draw(now, remainingSeconds, noHand, handTooClose) {
   const w = canvas.width;
   const h = canvas.height;
   ctx.clearRect(0, 0, w, h);
@@ -244,19 +251,6 @@ function draw(now, remainingSeconds, noHand) {
   const boxH = Math.round(h * 0.09);
   const gap = 10;
   const y0 = h - (boxH + gap) * letters.length - gap;
-
-  const fontSize = Math.max(26, Math.round(w * 0.034));
-  ctx.font = `${fontSize}px sans-serif`;
-  const lines = wrapLines(currentQuestion.question, w * 0.78);
-  const lineH = Math.round(fontSize * 1.25);
-  const headerHeight = lines.length * lineH + Math.round(h * 0.025);
-
-  ctx.fillStyle = "rgba(20,34,75,0.85)";
-  ctx.fillRect(0, 0, w, headerHeight);
-  ctx.fillStyle = "#ffffff";
-  lines.forEach((text, i) => {
-    ctx.fillText(text, Math.round(w * 0.02), lineH * (i + 1) - Math.round(lineH * 0.28));
-  });
 
   const timerColor = remainingSeconds != null && remainingSeconds <= 5 ? "#d8322a" : "#d4f04a";
   drawTimerChip(w, remainingSeconds, timerColor);
@@ -281,10 +275,12 @@ function draw(now, remainingSeconds, noHand) {
 
   if (lockedAnswer) {
     drawLockedBanner(w, h, lockedAnswer);
+  } else if (handTooClose) {
+    drawCameraToast(w, h, "Move back so both hands fit in view");
   } else if (pointing && holdStart) {
     drawHoldRing(w, h, Math.min((now - holdStart) / HOLD_MS, 1), pointing);
   } else if (noHand) {
-    drawNoHandToast(w, h);
+    drawCameraToast(w, h, "Show both hands clearly");
   }
 }
 
@@ -294,9 +290,10 @@ function track(landmarker) {
   let choice = null;
   let confirmed = false;
   let sawAnyHand = false;
+  let handTooClose = false;
 
   if (video.readyState >= 2) {
-    if (currentQuestion && Date.now() - lastPreviewAt >= 1000) {
+    if (currentQuestion && Date.now() - lastPreviewAt >= PREVIEW_INTERVAL_MS) {
       previewContext.drawImage(video, 0, 0, previewCanvas.width, previewCanvas.height);
       socket.emit("participant_camera", {
         frame: previewCanvas.toDataURL("image/jpeg", 0.4),
@@ -306,6 +303,7 @@ function track(landmarker) {
     const result = landmarker.detectForVideo(video, now);
     sawAnyHand = result.landmarks.length > 0;
     for (const lm of result.landmarks) {
+      handTooClose = handTooClose || isHandTooClose(lm);
       const states = fingersUp(lm);
       choice = choiceFrom(states) || choice;
       if (isThumbsUp(states, lm)) confirmed = true;
@@ -315,7 +313,7 @@ function track(landmarker) {
   if (sawAnyHand) lastHandSeenAt = now;
   const noHand = !lockedAnswer && currentQuestion && (now - lastHandSeenAt) > NO_HAND_WARNING_MS;
 
-  if (currentQuestion && !lockedAnswer) {
+  if (currentQuestion && !lockedAnswer && !handTooClose) {
     if (choice && confirmed) {
       if (choice !== pointing) {
         pointing = choice;
@@ -328,6 +326,9 @@ function track(landmarker) {
       pointing = null;
       holdStart = null;
     }
+  } else if (handTooClose && !lockedAnswer) {
+    pointing = null;
+    holdStart = null;
   }
 
   let remainingSeconds = null;
@@ -337,7 +338,7 @@ function track(landmarker) {
     ));
   }
 
-  draw(now, remainingSeconds, noHand);
+  draw(now, remainingSeconds, noHand, handTooClose);
   requestAnimationFrame(() => track(landmarker));
 }
 
@@ -376,6 +377,8 @@ document.getElementById("start-btn").addEventListener("click", async () => {
     await refreshQuestion();
     requestAnimationFrame(() => track(landmarker));
   } catch (e) {
+    video.srcObject?.getTracks().forEach((track) => track.stop());
+    video.srcObject = null;
     startBtn.disabled = false;
     startBtn.textContent = "Enable camera & join";
     err.style.display = "block";
@@ -385,6 +388,14 @@ document.getElementById("start-btn").addEventListener("click", async () => {
         : `Could not start: ${e.message}`;
     showCameraToast("Camera could not be enabled.", true);
   }
+});
+
+document.getElementById("ready-btn").addEventListener("click", (event) => {
+  const button = event.currentTarget;
+  socket.emit("participant_ready");
+  button.disabled = true;
+  button.textContent = "Ready!";
+  statusEl.textContent = "You're ready. Waiting for the host to start.";
 });
 
 refreshQuestion();

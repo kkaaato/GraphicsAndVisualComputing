@@ -35,7 +35,7 @@ function renderParticipants() {
     waiting.textContent = participant.online === false ? "Disconnected" : "Waiting for camera";
     waiting.hidden = Boolean(participant.frame) && participant.online !== false;
     const name = document.createElement("p");
-    name.textContent = participant.name;
+    name.textContent = participant.ready ? `${participant.name} · Ready` : participant.name;
     tile.dataset.sid = sid;
     tile.append(image, waiting, name);
     grid.appendChild(tile);
@@ -154,7 +154,12 @@ function refresh() {
 socket.on("question_update", refresh);
 socket.on("answer_locked", refresh);
 socket.on("participant_joined", ({ sid, name }) => {
-  participants.set(sid, { name, frame: null, online: true });
+  participants.set(sid, { name, frame: null, online: true, ready: false });
+  renderParticipants();
+});
+socket.on("participant_ready", ({ sid }) => {
+  const participant = participants.get(sid);
+  if (participant) participant.ready = true;
   renderParticipants();
 });
 socket.on("participant_left", ({ sid }) => {

@@ -13,7 +13,7 @@ a browser on any device — no installs.
   camera. MediaPipe Tasks processes the camera locally in the browser, and
   only the confirmed answer is sent to the server.
   1–4 fingers on one hand pick A–D, a thumbs-up on the other hand confirms;
-  holding both steady for 1.2 s locks the answer.
+  holding both steady for 0.8 s locks the answer.
 
 ## The browser vision pipeline (`static/join.js`)
 
@@ -23,6 +23,36 @@ a browser on any device — no installs.
 4. Canvas rendering — draws the camera, choices, and gesture state
 5. Socket.IO — sends only the confirmed answer to Flask
 
+The participant view prompts users to move back when a detected hand fills too
+much of the camera frame. Keep both hands visible, with the answering thumb
+tucked and the confirming thumbs-up on the other hand.
+
+The active quiz uses MediaPipe Tasks in the browser. `vision.py` is a separate
+OpenCV/MediaPipe Tasks pipeline and is not called by the live quiz. It downloads
+the hand-landmarker model on first use and caches it in the system temporary
+folder; it requires an internet connection for that first run.
+
+## Run locally in VS Code
+
+1. Open the `GraphicsAndVisualComputing` folder in VS Code and select a Python
+  3.11 interpreter.
+2. In the integrated PowerShell terminal, create and install the environment:
+
+  ```powershell
+  python -m venv .venv
+  .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+  ```
+
+3. Start Flask from this folder:
+
+  ```powershell
+  .\.venv\Scripts\python.exe app.py
+  ```
+
+4. Open `http://127.0.0.1:5000` in a browser. Camera access works on localhost;
+  do not open the HTML files directly. MediaPipe Tasks downloads its library
+  and model from the internet when a participant joins.
+
 ## Privacy
 
 Answers and display names are held in server memory for the live session only
@@ -31,22 +61,6 @@ camera previews are sent to the host for live supervision; frames are relayed
 in memory and are never recorded or stored. Gesture recognition runs locally
 in the browser. Student joiners do not need accounts; account passwords are
 stored hashed.
-
-## Deploy (Render)
-
-1. Push this repo to GitHub.
-2. Render → New → Web Service → select the repo.
-3. If `render.yaml` is detected, settings are filled in automatically
-  (including `PYTHON_VERSION=3.11`).
-   Otherwise: build command `pip install -r requirements.txt`,
-  start command `gunicorn --worker-class gthread --threads 100 --workers 1 app:app`.
-4. Add a `SECRET_KEY` environment variable (Render can generate one).
-5. Host logs in at `https://<your-app>.onrender.com`, creates a quiz, opens
-   its Host page; students join at `https://<your-app>.onrender.com/join`.
-
-Notes: the free tier sleeps after inactivity — wake the site before a
-session. The SQLite file is ephemeral on Render; create quizzes after
-deploying. Camera access requires HTTPS, which Render provides.
 
 ## Stack
 

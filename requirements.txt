@@ -4,3 +4,6 @@ gunicorn
 simple-websocket
 werkzeug
 requests
+opencv-python
+numpy
+mediapipe

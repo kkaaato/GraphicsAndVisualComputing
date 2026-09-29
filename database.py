@@ -9,13 +9,18 @@ for them. Account passwords are always stored hashed, never in
 plain text.
 """
 
+import os
 import sqlite3
+from pathlib import Path
 from werkzeug.security import generate_password_hash, check_password_hash
 
-DB_PATH = "quiz.db"
+DB_PATH = os.environ.get(
+    "DATABASE_PATH", str(Path(__file__).resolve().with_name("quiz.db"))
+)
 
 
 def get_db():
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

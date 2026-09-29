@@ -2,6 +2,8 @@ const questionList = document.getElementById("question-list");
 const addQuestionButton = document.getElementById("add-question");
 const form = document.querySelector("form");
 const questionsField = document.getElementById("questions");
+const editQuizData = JSON.parse(document.getElementById("edit-quiz-data").dataset.quiz);
+form.noValidate = true;
 let nextQuestionId = 1;
 
 function renumberAnswers(answerList, questionId) {
@@ -104,8 +106,8 @@ function addQuestion(initial = null, startCollapsed = false) {
 
 addQuestionButton.addEventListener("click", () => addQuestion());
 
-if (window.EDIT_QUIZ && window.EDIT_QUIZ.length) {
-  window.EDIT_QUIZ.forEach((question, index) => addQuestion(question, index !== 0));
+if (editQuizData.length) {
+  editQuizData.forEach((question, index) => addQuestion(question, index !== 0));
 } else {
   addQuestion();
 }
@@ -118,21 +120,40 @@ function serializeQuestions() {
     const answers = [...card.querySelectorAll(".answer-row")];
     const correct = card.querySelector("input[type=radio]:checked");
     const texts = answers.map((row) => row.querySelector(".answer-text").value.trim());
+    const seconds = Number(timeLimit);
+    const delimiterUsed = [question, ...texts].some((text) => text.includes("|"));
 
-    if (!question || !timeLimit || texts.length < 2 || texts.some((text) => !text) || !correct) {
+    if (!question || !Number.isInteger(seconds) || seconds < 5 || seconds > 600
+        || texts.length < 2 || texts.some((text) => !text) || !correct || delimiterUsed) {
       card.classList.remove("collapsed");
+      if (!question) card.querySelector(".question-text").focus();
+      else if (!Number.isInteger(seconds) || seconds < 5 || seconds > 600) card.querySelector(".time-limit").focus();
+      else if (texts.some((text) => !text)) answers[texts.findIndex((text) => !text)].querySelector(".answer-text").focus();
+      else if (delimiterUsed) {
+        const field = [card.querySelector(".question-text"), ...answers.map((row) => row.querySelector(".answer-text"))]
+          .find((input) => input.value.includes("|"));
+        field.focus();
+      }
+      else card.querySelector("input[type=radio]").focus();
       return null;
     }
-    lines.push([question, ...texts, correct.value, timeLimit].join("|"));
+    lines.push([question, ...texts, correct.value, String(seconds)].join("|"));
   }
   return lines.join("\n");
 }
 
 form.addEventListener("submit", (event) => {
+  const title = form.querySelector('[name="title"]');
+  if (!title.value.trim()) {
+    event.preventDefault();
+    window.alert("Enter a quiz title.");
+    title.focus();
+    return;
+  }
   const serialized = serializeQuestions();
   if (!serialized) {
     event.preventDefault();
-    window.alert("Add a question with at least two answers, and choose the correct answer.");
+    window.alert("Complete each question, add 2–4 answers, select the correct answer, use a 5–600 second timer, and don't use | in question or answer text.");
     return;
   }
   questionsField.value = serialized;
