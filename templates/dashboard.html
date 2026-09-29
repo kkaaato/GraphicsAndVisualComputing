@@ -1,29 +1,25 @@
 {% extends "base.html" %}
 {% block title %}My Quizzes — GestureLock{% endblock %}
 {% block content %}
-  <h1>My Quizzes</h1>
-  {% if request.args.get('saved') %}<div class="saved-message">Quiz saved successfully.</div>{% endif %}
-  <p class="muted-link">Logged in as {{ email }}</p>
-  <div class="btn-row">
-    <a class="btn btn-secondary btn-small" href="{{ url_for('home') }}">Back to home</a>
-    <a class="btn btn-danger btn-small" href="{{ url_for('logout') }}">Log out</a>
+  <div class="dashboard-header">
+    <h1 style="margin:0;">My Quizzes</h1>
+    {% if request.args.get('saved') %}<div class="saved-message">Quiz saved successfully.</div>{% endif %}
   </div>
 
-  <div class="quiz-list">
-    {% for quiz in quizzes %}
+  {% for quiz in quizzes %}
     <div class="quiz-row">
-      <span class="quiz-title">{{ quiz.title }}</span>
-      <div class="row-actions">
-        <a class="btn btn-secondary btn-small" href="{{ url_for('edit_quiz', quiz_id=quiz.id) }}">Edit</a>
-        <a class="btn btn-small" href="{{ url_for('host_page', quiz_id=quiz.id) }}">Host</a>
+      <span>{{ quiz.title }}</span>
+      <div class="btn-row">
+        <a class="btn btn-secondary btn-sm" href="{{ url_for('edit_quiz', quiz_id=quiz.id) }}">Edit</a>
+        <a class="btn btn-primary btn-sm" href="{{ url_for('host_page', quiz_id=quiz.id) }}">Host</a>
       </div>
     </div>
-    {% else %}
-      <p style="color:#a9a4c2;">No quizzes yet. Create your first one below.</p>
-    {% endfor %}
-  </div>
+  {% else %}
+    <p style="color: var(--text-muted);">No quizzes yet — create your first one below.</p>
+  {% endfor %}
 
-  <div class="home-actions">
-    <a class="btn" href="{{ url_for('new_quiz') }}">Create a new quiz</a>
+  <div class="action-row">
+    <a class="btn btn-secondary btn-return" href="{{ url_for('home') }}">&larr; Return</a>
+    <a class="btn btn-primary btn-grow" href="{{ url_for('new_quiz') }}">+ Create a new quiz</a>
   </div>
 {% endblock %}

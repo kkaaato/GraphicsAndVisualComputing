@@ -1,29 +1,38 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}GestureLock{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {% block head %}{% endblock %}
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="profile-drawer">
-      <button class="profile-tab" type="button" aria-label="Open profile">Profile</button>
-      <h2>Profile</h2>
-      {% if session.get('user_id') %}
-        <p class="profile-status logged-in">● Logged in</p>
-        <p class="profile-email">{{ logged_in_email }}</p>
-        <a class="btn btn-secondary btn-small" href="{{ url_for('dashboard') }}">Dashboard</a>
-        <a class="btn btn-danger btn-small" href="{{ url_for('logout') }}">Log out</a>
+  <nav class="topnav">
+    <a class="topnav-brand" href="{{ url_for('home') }}">
+      <span class="brand-mark" aria-hidden="true">&#9995;</span>GestureLock
+    </a>
+    <div class="topnav-right">
+      {% if session.get('user_id') and logged_in_email %}
+        <div class="profile-chip" title="Logged in">
+          <span class="avatar">{{ logged_in_email[0]|upper }}</span>
+          <span class="profile-email">{{ logged_in_email }}</span>
+          <span class="dot logged-in"></span>
+        </div>
+        <a class="nav-btn" href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a class="nav-btn nav-btn-outline" href="{{ url_for('logout') }}">Log out</a>
       {% else %}
-        <p class="profile-status logged-out">● Not logged in</p>
-        <a class="btn btn-small" href="{{ url_for('login') }}">Log in</a>
-        <a class="btn btn-secondary btn-small" href="{{ url_for('signup') }}">Create account</a>
+        <span class="topnav-status"><span class="dot logged-out"></span>Not logged in</span>
+        <a class="nav-btn" href="{{ url_for('login') }}">Log in</a>
+        <a class="nav-btn nav-btn-primary" href="{{ url_for('signup') }}">Create account</a>
       {% endif %}
-    </aside>
-    <main class="card">
+    </div>
+  </nav>
+  <div class="app-shell">
+    <main class="card {% block card_class %}{% endblock %}">
       {% block content %}{% endblock %}
     </main>
   </div>

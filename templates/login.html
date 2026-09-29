@@ -1,15 +1,49 @@
 {% extends "base.html" %}
 {% block title %}Log in — GestureLock{% endblock %}
+{% block card_class %}auth-card{% endblock %}
 {% block content %}
-  <h1>Log in</h1>
-  <form method="post">
-    <label>Email</label>
-    <input type="email" name="email" required>
-    <label>Password</label>
-    <input type="password" name="password" required>
-    <button type="submit">Log in</button>
+  <div class="auth-head">
+    <div class="hero-mark small" aria-hidden="true">&#9995;</div>
+    <h1>Welcome back</h1>
+    <p class="auth-sub">Log in to create and host quizzes.</p>
+  </div>
+
+  {% if error %}
+    <div class="alert alert-error" role="alert" id="server-error">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v5M12 16h.01"/></svg>
+      <span>{{ error }}</span>
+    </div>
+  {% endif %}
+
+  <form method="post" id="auth-form" novalidate data-mode="login">
+    <div class="field">
+      <label for="email">Email</label>
+      <div class="input-wrap">
+        <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com"
+               value="{{ request.form.get('email', '') }}" class="{% if error %}invalid{% endif %}" required autofocus>
+      </div>
+      <div class="field-error" id="email-error" hidden></div>
+    </div>
+
+    <div class="field">
+      <label for="password">Password</label>
+      <div class="input-wrap">
+        <input id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password"
+               class="has-toggle {% if error %}invalid{% endif %}" required>
+          <button type="button" class="toggle-password" aria-label="Show password" aria-pressed="false">
+            <svg class="eye-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="eye-closed" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a19.8 19.8 0 0 1 5.06-5.94M9.9 4.24A10.9 10.9 0 0 1 12 4c7 0 11 7 11 7a19.7 19.7 0 0 1-3.17 4.19M1 1l22 22"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/></svg>
+          </button>
+      </div>
+      <div class="field-error" id="password-error" hidden>Please enter your password.</div>
+    </div>
+
+    <button type="submit" class="btn-block" id="auth-submit">Log in</button>
   </form>
-  {% if error %}<div class="error">{{ error }}</div>{% endif %}
-  <p class="muted-link">Need an account? <a href="{{ url_for('signup') }}">Sign up</a></p>
-  <div class="btn-row"><a class="btn btn-secondary btn-small" href="{{ url_for('home') }}">Back to home</a></div>
+
+  <p class="auth-switch">Need an account? <a href="{{ url_for('signup') }}">Sign up</a></p>
+  <a class="btn btn-secondary btn-block btn-back" href="{{ url_for('home') }}">&larr; Back to home</a>
+{% endblock %}
+{% block scripts %}
+  <script src="{{ url_for('static', filename='auth.js') }}"></script>
 {% endblock %}
