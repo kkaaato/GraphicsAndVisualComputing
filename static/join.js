@@ -90,7 +90,7 @@ function fingersUp(lm) {
 function choiceFrom(states) {
   if (states[0]) return null;
   const count = states.slice(1).filter(Boolean).length;
-  const choice = { 1: "A", 2: "B", 3: "C", 4: "D" }[count];
+  const choice = { 1: "A", 2: "B", 3: "C", 4: "D"}[count];
   return choice && currentQuestion?.choices[choice] ? choice : null;
 }
 

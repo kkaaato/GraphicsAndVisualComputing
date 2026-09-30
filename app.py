@@ -13,7 +13,7 @@ import database
 PREVIEW_INTERVAL_S = 0.2
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-only-insecure-key")
+app.secret_key = os.environ.get("SECRET_KEY", "MykakuMyGoat")
 socketio = SocketIO(
     app,
     cors_allowed_origins="*",
